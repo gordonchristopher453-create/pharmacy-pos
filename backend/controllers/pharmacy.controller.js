@@ -176,7 +176,15 @@ const getAllPharmacies = async (req, res) => {
     const PharmacyModel = require('../models/pharmacy.model');
     const pharmacies = await PharmacyModel.findAll();
     return successResponse(res, 200, 'Facilities fetched', pharmacies);
-  } catch (error) { return errorResponse(res, 500, 'Failed to fetch facilities'); }
+  } catch (error) {
+    logger.error('Failed to fetch facilities in controller:', error.message);
+    try {
+      const basic = await pool.query('SELECT * FROM pharmacies WHERE deleted_at IS NULL ORDER BY id DESC');
+      return successResponse(res, 200, 'Facilities fetched', basic.rows);
+    } catch (dbErr) {
+      return errorResponse(res, 500, error.message || 'Failed to fetch facilities');
+    }
+  }
 };
 
 const updateSubscription = async (req, res) => {

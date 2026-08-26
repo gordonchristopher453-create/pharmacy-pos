@@ -67,7 +67,9 @@ export default function SuperAdminPage() {
     setLoading(true);
     try {
       const pharRes = await api.get('/pharmacy/all');
-      setPharmacies(pharRes.data.data);
+      if (Array.isArray(pharRes.data?.data)) {
+        setPharmacies(pharRes.data.data);
+      }
     } catch (error) {
       toast.error('Failed to load data');
     } finally { setLoading(false); }
@@ -79,11 +81,29 @@ export default function SuperAdminPage() {
     }
     setCreating(true);
     try {
-      await api.post('/pharmacy/create', form);
+      const res = await api.post('/pharmacy/create', form);
       toast.success(`Facility "${form.name}" created! Onboarding email with login credentials and setup guides sent to ${maskEmail(form.admin_email)}.`, { duration: 10000 });
       setShowCreate(false);
+      
+      if (res.data?.data?.pharmacy) {
+        const ph = res.data.data.pharmacy;
+        const newPh = {
+          ...ph,
+          plan: res.data.data.subscription?.plan || form.plan || 'premium',
+          subscription_status: 'active',
+          expires_at: res.data.data.subscription?.expires_at,
+          admin_email: res.data.data.admin?.email || form.admin_email,
+          admin_name: form.admin_name || `${form.name} Admin`,
+          admin_user_id: res.data.data.admin?.id,
+          user_count: 1,
+          is_active: true,
+          facility_type: form.facility_type || 'hospital',
+        };
+        setPharmacies(prev => [newPh, ...prev.filter(p => p.id !== newPh.id)]);
+      }
+
       setForm(initialForm);
-      fetchAll();
+      await fetchAll();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to create facility');
     } finally { setCreating(false); }

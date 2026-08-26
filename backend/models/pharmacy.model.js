@@ -65,39 +65,47 @@ class PharmacyModel {
   }
 
   static async findAll() {
-    const result = await pool.query(`
-      SELECT p.*,
-        COALESCE(s.plan, 'trial') as plan,
-        COALESCE(s.status, 'active') as subscription_status,
-        s.expires_at,
-        COALESCE(u_count.total, 0)::int as user_count,
-        COALESCE(u_admin.email, p.email) as admin_email,
-        COALESCE(u_admin.full_name, 'Admin') as admin_name,
-        u_admin.id as admin_user_id
-      FROM pharmacies p
-      LEFT JOIN LATERAL (
-        SELECT plan, status, expires_at
-        FROM subscriptions
-        WHERE pharmacy_id = p.id
-        ORDER BY id DESC
-        LIMIT 1
-      ) s ON true
-      LEFT JOIN LATERAL (
-        SELECT COUNT(id) as total
-        FROM users
-        WHERE pharmacy_id = p.id
-      ) u_count ON true
-      LEFT JOIN LATERAL (
-        SELECT id, email, full_name
-        FROM users
-        WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin')
-        ORDER BY id ASC
-        LIMIT 1
-      ) u_admin ON true
-      WHERE p.deleted_at IS NULL
-      ORDER BY COALESCE(p.created_at, NOW()) DESC, p.id DESC
-    `);
-    return result.rows;
+    try {
+      const result = await pool.query(`
+        SELECT 
+          p.id,
+          p.name,
+          p.email,
+          p.phone,
+          p.address,
+          p.city,
+          COALESCE(p.country, 'Kenya') as country,
+          p.license_number,
+          COALESCE(p.facility_type, 'hospital') as facility_type,
+          p.logo_url,
+          COALESCE(p.is_active, true) as is_active,
+          p.deleted_at,
+          COALESCE(p.created_at, NOW()) as created_at,
+          COALESCE(p.updated_at, NOW()) as updated_at,
+          COALESCE((SELECT plan FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1), 'trial') as plan,
+          COALESCE((SELECT status FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1), 'active') as subscription_status,
+          (SELECT expires_at FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1) as expires_at,
+          COALESCE((SELECT COUNT(*)::int FROM users WHERE pharmacy_id = p.id), 0) as user_count,
+          COALESCE((SELECT email FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), p.email) as admin_email,
+          COALESCE((SELECT full_name FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), 'Admin') as admin_name,
+          (SELECT id FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1) as admin_user_id
+        FROM pharmacies p
+        WHERE p.deleted_at IS NULL
+        ORDER BY p.id DESC
+      `);
+      return result.rows;
+    } catch (err) {
+      console.error('PharmacyModel.findAll query error, running fallback:', err.message);
+      const fallback = await pool.query(`SELECT * FROM pharmacies WHERE deleted_at IS NULL ORDER BY id DESC`);
+      return fallback.rows.map(p => ({
+        ...p,
+        plan: 'trial',
+        subscription_status: 'active',
+        admin_email: p.email,
+        admin_name: 'Admin',
+        user_count: 1
+      }));
+    }
   }
 
   static async findById(id) {

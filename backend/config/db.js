@@ -154,6 +154,28 @@ async function runMigrationsAndSeed(p) {
     } catch (e) {}
 
     await p.query(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT UNIQUE,
+        plan VARCHAR(50) DEFAULT 'trial',
+        status VARCHAR(50) DEFAULT 'active',
+        expires_at TIMESTAMPTZ,
+        max_users INT DEFAULT 10,
+        max_counters INT DEFAULT 5,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    try {
+      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_users INT DEFAULT 10`);
+      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_counters INT DEFAULT 5`);
+      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS notes TEXT`);
+      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+      await p.query(`ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_pharmacy_id_key UNIQUE (pharmacy_id)`);
+    } catch (e) {}
+
+    await p.query(`
       CREATE TABLE IF NOT EXISTS super_admins (
         id SERIAL PRIMARY KEY,
         full_name VARCHAR(255) NOT NULL,
