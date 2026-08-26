@@ -1,0 +1,6 @@
+{
+  "name": "Pharmacy POS",
+  "description": "Enterprise healthcare management system featuring the complete clinical-to-billing Medicare Unified suite with real-time workflow checks, eTIMS compliance, and SHA/NHIF billing integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

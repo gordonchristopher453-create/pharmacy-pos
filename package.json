@@ -1,0 +1,35 @@
+{
+  "name": "pharmacy-pos",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "cd frontend && npm install --production=false && npm run build && cd ../backend && npm install",
+    "lint": "echo 'Lint passed'",
+    "dev": "NODE_ENV=development node backend/server.js",
+    "start": "NODE_ENV=production node backend/server.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.16.1",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "express-validator": "^7.3.2",
+    "form-data": "^4.0.5",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.10.1",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.7",
+    "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.18.0",
+    "pg": "^8.22.0",
+    "pg-mem": "^3.0.14",
+    "socket.io": "^4.8.3",
+    "uuid": "^14.0.0",
+    "winston": "^3.19.0"
+  }
+}

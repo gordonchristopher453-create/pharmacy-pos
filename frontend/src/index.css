@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+:root {
+  --bg-base:      #0F1612;
+  --bg-surface:   #1A2420;
+  --bg-elevated:  #223028;
+  --accent:       #10B981;
+  --accent-hover: #059669;
+  --accent-soft:  rgba(16,185,129,0.12);
+  --text-primary: #E8F5F0;
+  --text-muted:   #6B9E8A;
+  --text-faint:   #3D6B5A;
+  --danger:       #EF4444;
+  --warning:      #F59E0B;
+  --info:         #3B82F6;
+  --border:       #2A3F38;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-surface); }
+::-webkit-scrollbar-thumb { background: var(--text-faint); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+select option {
+  background-color: #1A2420 !important;
+  color: #E8F5F0 !important;
+}
+
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Custom resets to fix cut-offs and double-scrollbar issues on mobile and desktop */
+main > div {
+  min-height: 100% !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+@media (max-width: 768px) {
+  /* Add better spacing for smaller mobile screens */
+  main > div {
+    padding: 16px 12px !important;
+  }
+}
+
