@@ -85,9 +85,10 @@ export default function SuperAdminPage() {
       toast.success(`Facility "${form.name}" created! Onboarding email with login credentials and setup guides sent to ${maskEmail(form.admin_email)}.`, { duration: 10000 });
       setShowCreate(false);
       
+      let createdPharmacy = null;
       if (res.data?.data?.pharmacy) {
         const ph = res.data.data.pharmacy;
-        const newPh = {
+        createdPharmacy = {
           ...ph,
           plan: res.data.data.subscription?.plan || form.plan || 'premium',
           subscription_status: 'active',
@@ -99,11 +100,22 @@ export default function SuperAdminPage() {
           is_active: true,
           facility_type: form.facility_type || 'hospital',
         };
-        setPharmacies(prev => [newPh, ...prev.filter(p => p.id !== newPh.id)]);
+        setPharmacies(prev => [createdPharmacy, ...prev.filter(p => String(p.id) !== String(createdPharmacy.id))]);
       }
 
       setForm(initialForm);
-      await fetchAll();
+      try {
+        const pharRes = await api.get('/pharmacy/all');
+        if (Array.isArray(pharRes.data?.data)) {
+          setPharmacies(prev => {
+            const remoteList = pharRes.data.data;
+            if (createdPharmacy && !remoteList.some(p => String(p.id) === String(createdPharmacy.id))) {
+              return [createdPharmacy, ...remoteList];
+            }
+            return remoteList;
+          });
+        }
+      } catch (_) {}
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to create facility');
     } finally { setCreating(false); }

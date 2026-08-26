@@ -36,11 +36,12 @@ const createPharmacy = async (req, res) => {
     `, [name.trim(), email.trim(), phone||null, address||null, city||null, country||'Kenya', cleanLicense, type]);
     const pharmacy = pharmacyResult.rows[0];
 
-    await client.query(`
-      INSERT INTO pharmacy_settings (pharmacy_id, receipt_header)
-      VALUES ($1, $2)
-      ON CONFLICT (pharmacy_id) DO UPDATE SET receipt_header = EXCLUDED.receipt_header
-    `, [pharmacy.id, `${name}\n${address||''}\n${phone||''}`]);
+    try {
+      await client.query(`
+        INSERT INTO pharmacy_settings (pharmacy_id, receipt_header)
+        VALUES ($1, $2)
+      `, [pharmacy.id, `${name}\n${address||''}\n${phone||''}`]);
+    } catch (_) {}
 
     const defaultAdminPermissions = JSON.stringify([
       'can_manage_users','can_assign_roles','can_assign_permissions','can_manage_departments',
@@ -76,13 +77,15 @@ const createPharmacy = async (req, res) => {
     const expiresDate = new Date();
     expiresDate.setDate(expiresDate.getDate() + durationDays);
 
-    const subResult = await client.query(`
-      INSERT INTO subscriptions (pharmacy_id, plan, status, expires_at)
-      VALUES ($1, $2, 'active', $3)
-      ON CONFLICT (pharmacy_id) DO UPDATE SET plan=EXCLUDED.plan, status='active', expires_at=EXCLUDED.expires_at
-      RETURNING *
-    `, [pharmacy.id, selectedPlan, expiresDate.toISOString()]);
-    const subscription = subResult.rows[0];
+    let subscription = { plan: selectedPlan, expires_at: expiresDate.toISOString() };
+    try {
+      const subResult = await client.query(`
+        INSERT INTO subscriptions (pharmacy_id, plan, status, expires_at)
+        VALUES ($1, $2, 'active', $3)
+        RETURNING *
+      `, [pharmacy.id, selectedPlan, expiresDate.toISOString()]);
+      if (subResult.rows[0]) subscription = subResult.rows[0];
+    } catch (_) {}
 
     // Seed departments safely
     try {

@@ -82,13 +82,13 @@ class PharmacyModel {
           p.deleted_at,
           COALESCE(p.created_at, NOW()) as created_at,
           COALESCE(p.updated_at, NOW()) as updated_at,
-          COALESCE((SELECT plan FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1), 'trial') as plan,
-          COALESCE((SELECT status FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1), 'active') as subscription_status,
-          (SELECT expires_at FROM subscriptions WHERE pharmacy_id = p.id ORDER BY id DESC LIMIT 1) as expires_at,
-          COALESCE((SELECT COUNT(*)::int FROM users WHERE pharmacy_id = p.id), 0) as user_count,
-          COALESCE((SELECT email FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), p.email) as admin_email,
-          COALESCE((SELECT full_name FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), 'Admin') as admin_name,
-          (SELECT id FROM users WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1) as admin_user_id
+          COALESCE((SELECT plan FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1), 'trial') as plan,
+          COALESCE((SELECT status FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1), 'active') as subscription_status,
+          (SELECT expires_at FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1) as expires_at,
+          COALESCE((SELECT COUNT(*)::int FROM users WHERE pharmacy_id::text = p.id::text), 0) as user_count,
+          COALESCE((SELECT email FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), p.email) as admin_email,
+          COALESCE((SELECT full_name FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), 'Admin') as admin_name,
+          (SELECT id FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1) as admin_user_id
         FROM pharmacies p
         WHERE p.deleted_at IS NULL
         ORDER BY p.id DESC

@@ -14,8 +14,8 @@ if (process.env.DATABASE_URL) {
   logger.info('Initializing real PostgreSQL Pool with DATABASE_URL');
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
-    connectionTimeoutMillis: 10000 // 10 seconds connection timeout
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 15000 // 15 seconds connection timeout
   });
 } else {
   logger.warn('DATABASE_URL is not set. Falling back to pg-mem in-memory PostgreSQL emulator.');
