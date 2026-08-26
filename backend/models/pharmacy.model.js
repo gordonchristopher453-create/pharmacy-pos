@@ -67,24 +67,35 @@ class PharmacyModel {
   static async findAll() {
     const result = await pool.query(`
       SELECT p.*,
-        s.plan, s.status as subscription_status, s.expires_at,
-        COUNT(DISTINCT u.id) as user_count,
-        u_admin.email as admin_email,
-        u_admin.full_name as admin_name,
+        COALESCE(s.plan, 'trial') as plan,
+        COALESCE(s.status, 'active') as subscription_status,
+        s.expires_at,
+        COALESCE(u_count.total, 0)::int as user_count,
+        COALESCE(u_admin.email, p.email) as admin_email,
+        COALESCE(u_admin.full_name, 'Admin') as admin_name,
         u_admin.id as admin_user_id
       FROM pharmacies p
-      LEFT JOIN subscriptions s ON p.id = s.pharmacy_id
-      LEFT JOIN users u ON p.id = u.pharmacy_id
+      LEFT JOIN LATERAL (
+        SELECT plan, status, expires_at
+        FROM subscriptions
+        WHERE pharmacy_id = p.id
+        ORDER BY id DESC
+        LIMIT 1
+      ) s ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(id) as total
+        FROM users
+        WHERE pharmacy_id = p.id
+      ) u_count ON true
       LEFT JOIN LATERAL (
         SELECT id, email, full_name
         FROM users
         WHERE pharmacy_id = p.id AND (role = 'facility_admin' OR role = 'admin')
-        ORDER BY created_at ASC
+        ORDER BY id ASC
         LIMIT 1
       ) u_admin ON true
       WHERE p.deleted_at IS NULL
-      GROUP BY p.id, s.plan, s.status, s.expires_at, u_admin.email, u_admin.full_name, u_admin.id
-      ORDER BY p.created_at DESC
+      ORDER BY COALESCE(p.created_at, NOW()) DESC, p.id DESC
     `);
     return result.rows;
   }
