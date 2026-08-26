@@ -13,11 +13,13 @@ const createPharmacy = async (req, res) => {
 
   const client = await pool.connect();
   try {
+    const cleanLicense = license_number && license_number.trim() ? license_number.trim() : null;
+
     const [facilityEmailCheck, adminEmailCheck, licenseCheck] = await Promise.all([
-      client.query(`SELECT id FROM pharmacies WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email]),
-      client.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [admin_email]),
-      license_number
-        ? client.query(`SELECT id FROM pharmacies WHERE LOWER(license_number)=LOWER($1) LIMIT 1`, [license_number])
+      client.query(`SELECT id FROM pharmacies WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email.trim()]),
+      client.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [admin_email.trim()]),
+      cleanLicense
+        ? client.query(`SELECT id FROM pharmacies WHERE LOWER(license_number)=LOWER($1) LIMIT 1`, [cleanLicense])
         : Promise.resolve({ rows: [] }),
     ]);
 
@@ -26,76 +28,118 @@ const createPharmacy = async (req, res) => {
     if (licenseCheck.rows.length > 0)       return errorResponse(res, 400, 'License number is already registered');
 
     await client.query('BEGIN');
-    const type = facility_type || 'hospital';
+    const type = facility_type === 'pharmacy' ? 'pharmacy' : 'hospital';
 
     const pharmacyResult = await client.query(`
       INSERT INTO pharmacies (name, email, phone, address, city, country, license_number, facility_type)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
-    `, [name, email, phone||null, address||null, city||null, country||'Kenya', license_number||null, type]);
+    `, [name.trim(), email.trim(), phone||null, address||null, city||null, country||'Kenya', cleanLicense, type]);
     const pharmacy = pharmacyResult.rows[0];
 
     await client.query(`
-      INSERT INTO pharmacy_settings (pharmacy_id, receipt_header) VALUES ($1,$2)
+      INSERT INTO pharmacy_settings (pharmacy_id, receipt_header)
+      VALUES ($1, $2)
+      ON CONFLICT (pharmacy_id) DO UPDATE SET receipt_header = EXCLUDED.receipt_header
     `, [pharmacy.id, `${name}\n${address||''}\n${phone||''}`]);
+
+    const defaultAdminPermissions = JSON.stringify([
+      'can_manage_users','can_assign_roles','can_assign_permissions','can_manage_departments',
+      'can_manage_billing_config','can_manage_sha_settings','can_manage_mch_config',
+      'can_manage_wards','can_manage_beds','can_view_all_reports','can_view_executive_dashboard',
+      'can_create_bills','can_receive_payments','can_print_receipts','can_print_invoices',
+      'can_view_daily_collections','can_view_cash_reports','can_verify_sha_patients',
+      'can_create_sha_claims','can_submit_sha_claims','can_track_sha_claims',
+      'can_manage_claim_rejections','can_view_claim_reports','can_view_financial_reports',
+      'can_view_revenue_reports','can_view_reconciliation','can_view_outstanding_balances',
+      'can_view_audit_reports','can_register_patients','can_manage_visits','can_search_patients',
+      'can_view_patient_demographics','can_access_pos','can_dispense','can_manage_stock'
+    ]);
 
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(admin_password, salt);
     const adminResult = await client.query(`
-      INSERT INTO users (full_name, email, password, role, pharmacy_id)
-      VALUES ($1,$2,$3,'facility_admin',$4) RETURNING id, full_name, email, role
-    `, [admin_name||`${name} Admin`, admin_email, hashedPassword, pharmacy.id]);
+      INSERT INTO users (full_name, email, password, role, pharmacy_id, permissions, is_active)
+      VALUES ($1, $2, $3, 'facility_admin', $4, $5::jsonb, true)
+      RETURNING id, full_name, email, role
+    `, [admin_name||`${name} Admin`, admin_email.trim(), hashedPassword, pharmacy.id, defaultAdminPermissions]);
     const adminUser = adminResult.rows[0];
 
     const selectedPlan = plan || 'premium';
-    let expiresInterval = "'1 year'";
-    if (active_period === '1_month') expiresInterval = "'1 month'";
-    else if (active_period === '3_months') expiresInterval = "'3 months'";
-    else if (active_period === '6_months') expiresInterval = "'6 months'";
-    else if (active_period === '1_year') expiresInterval = "'1 year'";
-    else if (active_period === 'unlimited') expiresInterval = "'100 years'";
-    else if (active_period === 'trial') expiresInterval = "'30 days'";
+    let durationDays = 365;
+    if (active_period === '1_month') durationDays = 30;
+    else if (active_period === '3_months') durationDays = 90;
+    else if (active_period === '6_months') durationDays = 180;
+    else if (active_period === '1_year') durationDays = 365;
+    else if (active_period === 'unlimited') durationDays = 36500;
+    else if (active_period === 'trial') durationDays = 30;
+
+    const expiresDate = new Date();
+    expiresDate.setDate(expiresDate.getDate() + durationDays);
 
     const subResult = await client.query(`
       INSERT INTO subscriptions (pharmacy_id, plan, status, expires_at)
-      VALUES ($1, $2, 'active', NOW() + INTERVAL ${expiresInterval}) RETURNING *
-    `, [pharmacy.id, selectedPlan]);
+      VALUES ($1, $2, 'active', $3)
+      ON CONFLICT (pharmacy_id) DO UPDATE SET plan=EXCLUDED.plan, status='active', expires_at=EXCLUDED.expires_at
+      RETURNING *
+    `, [pharmacy.id, selectedPlan, expiresDate.toISOString()]);
     const subscription = subResult.rows[0];
 
-    const departments = ['Reception','Triage','OPD','MCH','Laboratory','Pharmacy','Billing','Inpatient','Theatre','Radiology'];
-    for (const dept of departments) {
-      await client.query(`INSERT INTO departments (name, pharmacy_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [dept, pharmacy.id]);
-    }
-
-    await client.query(`INSERT INTO counters (name, pharmacy_id) VALUES ('Counter 1',$1)`, [pharmacy.id]);
-
-    const CATS = [
-      ['Antibiotics','Antibiotic medicines'],['Analgesics','Pain relief medicines'],
-      ['Antimalaria','Malaria treatment medicines'],['Antihistamines','Allergy medicines'],
-      ['Antifungals','Fungal infection treatments'],['Vitamins & Supplements','Vitamins and nutritional supplements'],
-      ['Antihypertensives','Blood pressure medicines'],['Antidiabetics','Diabetes management medicines'],
-      ['Gastrointestinal','Stomach and digestive medicines'],['Respiratory','Cough, cold and respiratory medicines'],
-      ['Dermatology','Skin care and treatment'],['Eye & Ear','Eye and ear drops and treatments'],
-      ['Surgical & Supplies','Medical supplies and surgical items'],['Family Planning','Contraceptives and family planning'],
-      ['IV Fluids','Intravenous fluids and infusions'],
-    ];
-    for (const [catName, catDesc] of CATS) {
-      await client.query(`
-        INSERT INTO categories (name, description, pharmacy_id) VALUES ($1,$2,$3)
-        ON CONFLICT (name, pharmacy_id) DO NOTHING
-      `, [catName, catDesc, pharmacy.id]);
-    }
-
+    // Seed departments safely
     try {
-      await client.query(`
-        INSERT INTO roles (name, pharmacy_id, permissions) VALUES
-          ('Doctor',$1,'["consultations","lab_orders","prescriptions"]'),
-          ('Nurse',$1,'["vitals","nursing_notes","lab_orders"]'),
-          ('Receptionist',$1,'["patients","visits","billing_view"]'),
-          ('Lab Technician',$1,'["lab_orders","lab_results"]'),
-          ('Pharmacist',$1,'["prescriptions","dispensing","stock"]'),
-          ('Cashier',$1,'["billing","payments"]')
-        ON CONFLICT DO NOTHING
-      `, [pharmacy.id]);
+      const departments = type === 'pharmacy' 
+        ? ['Pharmacy', 'Billing'] 
+        : ['Reception','Triage','OPD','MCH','Laboratory','Pharmacy','Billing','Inpatient','Theatre','Radiology'];
+      for (const dept of departments) {
+        await client.query(`INSERT INTO departments (name, pharmacy_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [dept, pharmacy.id]).catch(() => {});
+      }
+    } catch (_) {}
+
+    // Seed counters safely
+    try {
+      await client.query(`INSERT INTO counters (name, pharmacy_id) VALUES ('Counter 1',$1) ON CONFLICT DO NOTHING`, [pharmacy.id]).catch(() => {});
+    } catch (_) {}
+
+    // Seed categories safely
+    try {
+      const CATS = [
+        ['Antibiotics','Antibiotic medicines'],['Analgesics','Pain relief medicines'],
+        ['Antimalaria','Malaria treatment medicines'],['Antihistamines','Allergy medicines'],
+        ['Antifungals','Fungal infection treatments'],['Vitamins & Supplements','Vitamins and nutritional supplements'],
+        ['Antihypertensives','Blood pressure medicines'],['Antidiabetics','Diabetes management medicines'],
+        ['Gastrointestinal','Stomach and digestive medicines'],['Respiratory','Cough, cold and respiratory medicines'],
+        ['Dermatology','Skin care and treatment'],['Eye & Ear','Eye and ear drops and treatments'],
+        ['Surgical & Supplies','Medical supplies and surgical items'],['Family Planning','Contraceptives and family planning'],
+        ['IV Fluids','Intravenous fluids and infusions'],
+      ];
+      for (const [catName, catDesc] of CATS) {
+        await client.query(`
+          INSERT INTO categories (name, description, pharmacy_id) VALUES ($1,$2,$3)
+          ON CONFLICT DO NOTHING
+        `, [catName, catDesc, pharmacy.id]).catch(() => {});
+      }
+    } catch (_) {}
+
+    // Seed roles safely
+    try {
+      if (type === 'pharmacy') {
+        await client.query(`
+          INSERT INTO roles (name, pharmacy_id, permissions) VALUES
+            ('Pharmacist',$1,'["can_access_pos","can_dispense","can_manage_stock","can_create_bills","can_receive_payments"]'),
+            ('Cashier',$1,'["can_access_pos","can_create_bills","can_receive_payments","can_print_receipts"]')
+          ON CONFLICT DO NOTHING
+        `, [pharmacy.id]).catch(() => {});
+      } else {
+        await client.query(`
+          INSERT INTO roles (name, pharmacy_id, permissions) VALUES
+            ('Doctor',$1,'["consultations","lab_orders","prescriptions"]'),
+            ('Nurse',$1,'["vitals","nursing_notes","lab_orders"]'),
+            ('Receptionist',$1,'["patients","visits","billing_view"]'),
+            ('Lab Technician',$1,'["lab_orders","lab_results"]'),
+            ('Pharmacist',$1,'["prescriptions","dispensing","stock"]'),
+            ('Cashier',$1,'["billing","payments"]')
+          ON CONFLICT DO NOTHING
+        `, [pharmacy.id]).catch(() => {});
+      }
     } catch (_) {}
 
     await client.query('COMMIT');
@@ -117,10 +161,11 @@ const createPharmacy = async (req, res) => {
     await client.query('ROLLBACK');
     logger.error('Create facility ROLLED BACK:', error.message);
     if (error.code === '23505') {
-      if (error.constraint?.includes('email'))   return errorResponse(res, 400, 'Email is already registered');
-      if (error.constraint?.includes('license')) return errorResponse(res, 400, 'License number is already registered');
+      if (error.constraint?.includes('email') || error.detail?.includes('email'))   return errorResponse(res, 400, 'Facility or admin email is already registered');
+      if (error.constraint?.includes('license') || error.detail?.includes('license')) return errorResponse(res, 400, 'License number is already registered');
+      return errorResponse(res, 400, 'Duplicate record: an email or license with this value already exists');
     }
-    return errorResponse(res, 500, 'Failed to create facility — all changes rolled back');
+    return errorResponse(res, 500, error.message ? `Failed to create facility: ${error.message}` : 'Failed to create facility — all changes rolled back');
   } finally {
     client.release();
   }

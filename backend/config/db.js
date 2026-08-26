@@ -132,9 +132,207 @@ async function runMigrationsAndSeed(p) {
         phone VARCHAR(50),
         address TEXT,
         city VARCHAR(100),
-        country VARCHAR(100),
-        email VARCHAR(255),
+        country VARCHAR(100) DEFAULT 'Kenya',
+        email VARCHAR(255) UNIQUE,
+        license_number VARCHAR(100),
+        facility_type VARCHAR(50) DEFAULT 'hospital',
         logo_url TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    try {
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS facility_type VARCHAR(50) DEFAULT 'hospital'`);
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS license_number VARCHAR(100)`);
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'Kenya'`);
+    } catch (e) {}
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS super_admins (
+        id SERIAL PRIMARY KEY,
+        full_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) DEFAULT 'super_admin',
+        reset_otp VARCHAR(20),
+        reset_otp_expires TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS pharmacy_settings (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT UNIQUE,
+        receipt_header TEXT,
+        receipt_footer TEXT,
+        receipt_show_logo BOOLEAN DEFAULT TRUE,
+        receipt_show_address BOOLEAN DEFAULT TRUE,
+        mpesa_till_number VARCHAR(50),
+        mpesa_paybill VARCHAR(50),
+        mpesa_account_name VARCHAR(100),
+        bank_name VARCHAR(100),
+        bank_account VARCHAR(100),
+        bank_branch VARCHAR(100),
+        currency VARCHAR(10) DEFAULT 'KES',
+        tax_rate DECIMAL(5,2) DEFAULT 0.00,
+        tax_name VARCHAR(50) DEFAULT 'VAT',
+        low_stock_alert_days INT DEFAULT 30,
+        expiry_alert_days INT DEFAULT 90,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS departments (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        name VARCHAR(100) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    try {
+      await p.query(`ALTER TABLE departments ADD CONSTRAINT departments_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
+    } catch (e) {}
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS counters (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        name VARCHAR(100) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    try {
+      await p.query(`ALTER TABLE counters ADD CONSTRAINT counters_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
+    } catch (e) {}
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    try {
+      await p.query(`ALTER TABLE categories ADD CONSTRAINT categories_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
+    } catch (e) {}
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS roles (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        name VARCHAR(100) NOT NULL,
+        permissions JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    try {
+      await p.query(`ALTER TABLE roles ADD CONSTRAINT roles_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
+    } catch (e) {}
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        name VARCHAR(255) NOT NULL,
+        contact_person VARCHAR(255),
+        email VARCHAR(255),
+        phone VARCHAR(50),
+        address TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS stock_batches (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        product_id UUID,
+        batch_number VARCHAR(100),
+        quantity INT NOT NULL DEFAULT 0,
+        buying_price DECIMAL(10,2) DEFAULT 0.00,
+        selling_price DECIMAL(10,2) DEFAULT 0.00,
+        expiry_date DATE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS purchases (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        supplier_id INT,
+        invoice_number VARCHAR(100),
+        purchase_date DATE DEFAULT CURRENT_DATE,
+        total_amount DECIMAL(12,2) DEFAULT 0.00,
+        amount_paid DECIMAL(12,2) DEFAULT 0.00,
+        status VARCHAR(50) DEFAULT 'received',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS purchase_items (
+        id SERIAL PRIMARY KEY,
+        purchase_id INT,
+        product_id UUID,
+        quantity INT NOT NULL,
+        cost_price DECIMAL(10,2) DEFAULT 0.00,
+        selling_price DECIMAL(10,2) DEFAULT 0.00,
+        expiry_date DATE,
+        batch_number VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sales (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        sale_number VARCHAR(100),
+        user_id INT,
+        patient_id INT,
+        customer_name VARCHAR(255),
+        total_amount DECIMAL(12,2) DEFAULT 0.00,
+        discount_amount DECIMAL(12,2) DEFAULT 0.00,
+        tax_amount DECIMAL(12,2) DEFAULT 0.00,
+        net_amount DECIMAL(12,2) DEFAULT 0.00,
+        amount_paid DECIMAL(12,2) DEFAULT 0.00,
+        payment_method VARCHAR(50) DEFAULT 'cash',
+        payment_status VARCHAR(50) DEFAULT 'paid',
+        status VARCHAR(50) DEFAULT 'completed',
+        counter_id INT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sale_items (
+        id SERIAL PRIMARY KEY,
+        sale_id INT,
+        product_id UUID,
+        product_name VARCHAR(255),
+        quantity INT NOT NULL,
+        unit_price DECIMAL(10,2) DEFAULT 0.00,
+        total_price DECIMAL(10,2) DEFAULT 0.00,
+        batch_number VARCHAR(100),
+        expiry_date DATE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
