@@ -10,15 +10,24 @@ const tenantStorage = new AsyncLocalStorage();
 let pool;
 let isInMemory = false;
 
-if (process.env.DATABASE_URL) {
-  logger.info('Initializing real PostgreSQL Pool with DATABASE_URL');
+const connectionString = 
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.NEON_DATABASE_URL ||
+  process.env.DATABASE_PRIVATE_URL ||
+  process.env.PGDATABASE_URL;
+
+if (connectionString) {
+  logger.info('Initializing real PostgreSQL Pool with detected database connection string');
   pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString,
     ssl: { rejectUnauthorized: false },
     connectionTimeoutMillis: 15000 // 15 seconds connection timeout
   });
 } else {
-  logger.warn('DATABASE_URL is not set. Falling back to pg-mem in-memory PostgreSQL emulator.');
+  logger.warn('No PostgreSQL connection string detected. Falling back to pg-mem in-memory PostgreSQL emulator.');
   isInMemory = true;
   
   try {

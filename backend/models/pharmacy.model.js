@@ -66,38 +66,48 @@ class PharmacyModel {
 
   static async findAll() {
     try {
-      const result = await pool.query(`
-        SELECT 
-          p.id,
-          p.name,
-          p.email,
-          p.phone,
-          p.address,
-          p.city,
-          COALESCE(p.country, 'Kenya') as country,
-          p.license_number,
-          COALESCE(p.facility_type, 'hospital') as facility_type,
-          p.logo_url,
-          COALESCE(p.is_active, true) as is_active,
-          p.deleted_at,
-          COALESCE(p.created_at, NOW()) as created_at,
-          COALESCE(p.updated_at, NOW()) as updated_at,
-          COALESCE((SELECT plan FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1), 'trial') as plan,
-          COALESCE((SELECT status FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1), 'active') as subscription_status,
-          (SELECT expires_at FROM subscriptions WHERE pharmacy_id::text = p.id::text ORDER BY id DESC LIMIT 1) as expires_at,
-          COALESCE((SELECT COUNT(*)::int FROM users WHERE pharmacy_id::text = p.id::text), 0) as user_count,
-          COALESCE((SELECT email FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), p.email) as admin_email,
-          COALESCE((SELECT full_name FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1), 'Admin') as admin_name,
-          (SELECT id FROM users WHERE pharmacy_id::text = p.id::text AND (role = 'facility_admin' OR role = 'admin') ORDER BY id ASC LIMIT 1) as admin_user_id
-        FROM pharmacies p
-        WHERE p.deleted_at IS NULL
-        ORDER BY p.id DESC
-      `);
-      return result.rows;
+      const pharmaciesRes = await pool.query(`SELECT * FROM pharmacies WHERE deleted_at IS NULL ORDER BY id DESC`);
+      const pharmacies = pharmaciesRes.rows || [];
+
+      if (pharmacies.length === 0) return [];
+
+      let subscriptions = [];
+      try {
+        const subRes = await pool.query(`SELECT pharmacy_id, plan, status, expires_at FROM subscriptions ORDER BY id DESC`);
+        subscriptions = subRes.rows || [];
+      } catch (_) {}
+
+      let users = [];
+      try {
+        const userRes = await pool.query(`SELECT id, full_name, email, role, pharmacy_id FROM users WHERE is_active = true`);
+        users = userRes.rows || [];
+      } catch (_) {}
+
+      return pharmacies.map(p => {
+        const pSub = subscriptions.find(s => String(s.pharmacy_id) === String(p.id)) || {};
+        const pUsers = users.filter(u => String(u.pharmacy_id) === String(p.id));
+        const pAdmin = pUsers.find(u => u.role === 'facility_admin' || u.role === 'admin') || {};
+
+        return {
+          ...p,
+          country: p.country || 'Kenya',
+          facility_type: p.facility_type || 'hospital',
+          is_active: p.is_active !== false,
+          created_at: p.created_at || new Date().toISOString(),
+          updated_at: p.updated_at || new Date().toISOString(),
+          plan: pSub.plan || 'trial',
+          subscription_status: pSub.status || 'active',
+          expires_at: pSub.expires_at || null,
+          user_count: pUsers.length > 0 ? pUsers.length : 1,
+          admin_email: pAdmin.email || p.email,
+          admin_name: pAdmin.full_name || 'Admin',
+          admin_user_id: pAdmin.id || null
+        };
+      });
     } catch (err) {
       console.error('PharmacyModel.findAll query error, running fallback:', err.message);
       const fallback = await pool.query(`SELECT * FROM pharmacies WHERE deleted_at IS NULL ORDER BY id DESC`);
-      return fallback.rows.map(p => ({
+      return (fallback.rows || []).map(p => ({
         ...p,
         plan: 'trial',
         subscription_status: 'active',

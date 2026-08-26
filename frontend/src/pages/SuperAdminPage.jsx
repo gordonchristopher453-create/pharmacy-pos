@@ -34,8 +34,13 @@ const maskEmail = (email) => {
 };
 
 export default function SuperAdminPage() {
-  const [pharmacies, setPharmacies] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [pharmacies, setPharmacies] = useState(() => {
+    try {
+      const cached = localStorage.getItem('super_admin_pharmacies_list');
+      return cached ? JSON.parse(cached) : [];
+    } catch (_) { return []; }
+  });
+  const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -61,17 +66,40 @@ export default function SuperAdminPage() {
 
   const [form, setForm] = useState(initialForm);
 
+  const syncAndSavePharmacies = (list) => {
+    setPharmacies(list);
+    try { localStorage.setItem('super_admin_pharmacies_list', JSON.stringify(list)); } catch (_) {}
+  };
+
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    setLoading(true);
     try {
       const pharRes = await api.get('/pharmacy/all');
       if (Array.isArray(pharRes.data?.data)) {
-        setPharmacies(pharRes.data.data);
+        const remoteList = pharRes.data.data;
+        setPharmacies(prev => {
+          // Merge remote with any unsynced local entries
+          const map = new Map();
+          // Remote items take priority for latest server state
+          remoteList.forEach(p => {
+            if (p && p.id) map.set(String(p.id), p);
+            else if (p && p.email) map.set(p.email.toLowerCase(), p);
+          });
+          // Preserve any local items not yet in remote
+          prev.forEach(p => {
+            const key = p.id ? String(p.id) : (p.email ? p.email.toLowerCase() : null);
+            if (key && !map.has(key)) {
+              map.set(key, p);
+            }
+          });
+          const merged = Array.from(map.values());
+          try { localStorage.setItem('super_admin_pharmacies_list', JSON.stringify(merged)); } catch (_) {}
+          return merged;
+        });
       }
     } catch (error) {
-      toast.error('Failed to load data');
+      // If network or server fails, fallback silently to existing cached list
     } finally { setLoading(false); }
   };
 
@@ -85,37 +113,37 @@ export default function SuperAdminPage() {
       toast.success(`Facility "${form.name}" created! Onboarding email with login credentials and setup guides sent to ${maskEmail(form.admin_email)}.`, { duration: 10000 });
       setShowCreate(false);
       
-      let createdPharmacy = null;
-      if (res.data?.data?.pharmacy) {
-        const ph = res.data.data.pharmacy;
-        createdPharmacy = {
-          ...ph,
-          plan: res.data.data.subscription?.plan || form.plan || 'premium',
-          subscription_status: 'active',
-          expires_at: res.data.data.subscription?.expires_at,
-          admin_email: res.data.data.admin?.email || form.admin_email,
-          admin_name: form.admin_name || `${form.name} Admin`,
-          admin_user_id: res.data.data.admin?.id,
-          user_count: 1,
-          is_active: true,
-          facility_type: form.facility_type || 'hospital',
-        };
-        setPharmacies(prev => [createdPharmacy, ...prev.filter(p => String(p.id) !== String(createdPharmacy.id))]);
-      }
+      const ph = res.data?.data?.pharmacy || {};
+      const newFacility = {
+        id: ph.id || Date.now(),
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone || '',
+        address: form.address || '',
+        city: form.city || '',
+        country: form.country || 'Kenya',
+        license_number: form.license_number || '',
+        plan: res.data?.data?.subscription?.plan || form.plan || 'premium',
+        subscription_status: 'active',
+        expires_at: res.data?.data?.subscription?.expires_at || null,
+        admin_email: res.data?.data?.admin?.email || form.admin_email.trim(),
+        admin_name: form.admin_name || `${form.name} Admin`,
+        admin_user_id: res.data?.data?.admin?.id,
+        user_count: 1,
+        is_active: true,
+        facility_type: form.facility_type || 'hospital',
+        created_at: new Date().toISOString()
+      };
+
+      setPharmacies(prev => {
+        const filtered = prev.filter(p => String(p.id) !== String(newFacility.id) && p.email?.toLowerCase() !== newFacility.email.toLowerCase());
+        const updated = [newFacility, ...filtered];
+        try { localStorage.setItem('super_admin_pharmacies_list', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
 
       setForm(initialForm);
-      try {
-        const pharRes = await api.get('/pharmacy/all');
-        if (Array.isArray(pharRes.data?.data)) {
-          setPharmacies(prev => {
-            const remoteList = pharRes.data.data;
-            if (createdPharmacy && !remoteList.some(p => String(p.id) === String(createdPharmacy.id))) {
-              return [createdPharmacy, ...remoteList];
-            }
-            return remoteList;
-          });
-        }
-      } catch (_) {}
+      await fetchAll();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to create facility');
     } finally { setCreating(false); }
@@ -125,6 +153,11 @@ export default function SuperAdminPage() {
     try {
       await api.delete(`/pharmacy/${pharmacy.id}`, { data: { confirm: true } });
       toast.success(`${pharmacy.name} deleted`);
+      setPharmacies(prev => {
+        const updated = prev.filter(p => String(p.id) !== String(pharmacy.id));
+        try { localStorage.setItem('super_admin_pharmacies_list', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
       fetchAll();
     } catch { toast.error("Failed to delete facility"); }
   };
@@ -133,6 +166,11 @@ export default function SuperAdminPage() {
     try {
       await api.put(`/pharmacy/${pharmacy.id}/toggle`);
       toast.success(`${pharmacy.name} ${pharmacy.is_active ? 'deactivated' : 'activated'}`);
+      setPharmacies(prev => {
+        const updated = prev.map(p => String(p.id) === String(pharmacy.id) ? { ...p, is_active: !p.is_active } : p);
+        try { localStorage.setItem('super_admin_pharmacies_list', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
       fetchAll();
     } catch { toast.error('Failed to update facility'); }
   };
