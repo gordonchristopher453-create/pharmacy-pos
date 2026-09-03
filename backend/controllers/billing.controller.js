@@ -310,33 +310,24 @@ const payVisitBill = async (req, res) => {
       WHERE id::text = $7::text
     `, [feePaid, pMethod, insProviderStr, member_number || null, auth_code || null, copayVal, vid]);
 
-    // Synchronize prescriptions and orders status
+    await client.query('COMMIT');
+
+    // Post-commit audit and realtime broadcast (non-blocking, won't abort payment)
     try {
-      await client.query(`
-        UPDATE prescriptions
-        SET status = CASE WHEN status = 'Pending' THEN 'Dispense Pending' ELSE status END, updated_at = NOW()
-        WHERE visit_id::text = $1::text
-      `, [vid]);
-      await client.query(`
-        UPDATE service_orders SET is_paid = true, updated_at = NOW()
-        WHERE visit_id::text = $1::text
-      `, [vid]);
-    } catch (orderErr) {
-      logger.warn('Order payment status sync warning: ' + orderErr.message);
+      await pool.query(`
+        INSERT INTO audit_logs (facility_id, pharmacy_id, user_id, action, table_name, record_id, new_values)
+        VALUES ($1,$1,$2,'visit_payment_received','visit',$3,$4)
+      `, [req.pharmacy_id, req.user?.id ? Number(req.user.id) : null, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
+    } catch (auditErr) {
+      logger.warn('Audit log write warning in payVisitBill: ' + auditErr.message);
     }
 
-    await client.query(`
-      INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
-      VALUES ($1,$2,'visit_payment_received','visit',$3,$4)
-    `, [req.pharmacy_id, req.user.id, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
-
-    await client.query('COMMIT');
     const io = req.app.get('io');
     if (io) io.emit(`billing_paid_${req.pharmacy_id}`, { visit_id: vid, items: updatedRows });
 
     return successResponse(res, 200, `Payment recorded for ${updatedRows.length} items`, updatedRows);
   } catch (e) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) {}
     logger.error('Error in payVisitBill:', e.message);
     return errorResponse(res, 500, e.message);
   } finally {

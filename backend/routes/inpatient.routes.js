@@ -1165,7 +1165,7 @@ router.get('/pharmacy-queue', async (req, res) => {
       LEFT JOIN users u ON iro.prescribed_by::text = u.id::text
       WHERE ($1::text IS NULL OR iro.pharmacy_id::text = $1::text OR iro.pharmacy_id IS NULL)
         AND (iro.status = 'pending' OR iro.status IS NULL)
-        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL OR iro.id IS NOT NULL)
+        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR (ia.id IS NOT NULL AND ia.status = 'admitted') OR (b.id IS NOT NULL AND b.status = 'occupied'))
 
       UNION ALL
 
@@ -1198,7 +1198,7 @@ router.get('/pharmacy-queue', async (req, res) => {
       LEFT JOIN users u ON pr.doctor_id::text = u.id::text
       WHERE ($1::text IS NULL OR pr.pharmacy_id::text = $1::text OR pr.pharmacy_id IS NULL)
         AND (pr.status = 'pending' OR pr.status IS NULL)
-        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL OR EXISTS (SELECT 1 FROM injection_room_orders iro3 WHERE iro3.visit_id::text = pr.visit_id::text))
+        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR (ia.id IS NOT NULL AND ia.status = 'admitted') OR (b.id IS NOT NULL AND b.status = 'occupied'))
         AND NOT EXISTS (
           SELECT 1 FROM injection_room_orders iro2 
           WHERE iro2.visit_id::text = pr.visit_id::text 

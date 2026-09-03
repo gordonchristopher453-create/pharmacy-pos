@@ -1031,14 +1031,22 @@ export default function PatientsPage() {
                     </Btn>
                     
                     {/* Primary Reception Payment Collection Button */}
-                    <Btn 
-                      size="sm" 
-                      onClick={() => handleOpenCollectModal(v)} 
-                      className={v.fee_paid ? "text-[var(--accent)] border-[var(--accent)]/30 hover:bg-[var(--accent)]/10" : "bg-emerald-500 text-black font-extrabold hover:bg-emerald-400 border border-emerald-400 shadow-md"}
-                      icon={v.fee_paid ? Receipt : CreditCard}
-                    >
-                      {v.fee_paid ? 'View Receipt / Settlement' : `Collect Payment (KES ${(parseFloat(v.consultation_fee || 0)).toLocaleString()})`}
-                    </Btn>
+                    {(() => {
+                      const hasPending = (parseInt(v.pending_bills || 0) > 0) || !v.fee_paid;
+                      const pendingAmt = parseFloat(v.pending_amount || (v.fee_paid ? 0 : v.consultation_fee) || 0);
+                      return (
+                        <Btn 
+                          size="sm" 
+                          onClick={() => handleOpenCollectModal(v)} 
+                          className={hasPending ? "bg-emerald-500 text-black font-extrabold hover:bg-emerald-400 border border-emerald-400 shadow-md" : "text-[var(--accent)] border-[var(--accent)]/30 hover:bg-[var(--accent)]/10"}
+                          icon={hasPending ? CreditCard : Receipt}
+                        >
+                          {hasPending 
+                            ? `Collect Payment ${pendingAmt > 0 ? `(KES ${pendingAmt.toLocaleString()})` : ''}`
+                            : 'View Receipt / Settlement'}
+                        </Btn>
+                      );
+                    })()}
                     
                     {isReceptionist && (['waiting', 'WAITING_TRIAGE', 'waiting_triage', 'open', 'REGISTERED'].includes(v.status)) && (
                       <Btn size="sm" variant="ghost" onClick={() => handleUpdateStatus(v.id, 'triaged')} className="text-[var(--info)] border-[var(--info)]/30 hover:bg-[var(--info)]/10" icon={Activity}>

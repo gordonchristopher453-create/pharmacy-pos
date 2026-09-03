@@ -12,8 +12,8 @@ class SuperAdminModel {
 
   static async findByEmail(email) {
     const result = await pool.query(`
-      SELECT * FROM super_admins WHERE email = $1 AND is_active = true
-    `, [email]);
+      SELECT * FROM super_admins WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND is_active = true
+    `, [email ? email.trim() : '']);
     return result.rows[0];
   }
 

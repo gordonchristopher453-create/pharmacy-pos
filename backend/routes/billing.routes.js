@@ -41,7 +41,7 @@ router.get('/inpatient-folder', protect, async (req, res) => {
       }
     }
 
-    let whereSql = `WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL) AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type,'')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL)`;
+    let whereSql = `WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL) AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type,'')) = 'inpatient' OR (ia.id IS NOT NULL AND ia.status = 'admitted') OR (b.id IS NOT NULL AND b.status = 'occupied'))`;
     const params = [req.pharmacy_id];
 
     if (status === 'admitted') {
@@ -160,7 +160,7 @@ router.get('/queue', protect, async (req, res) => {
       SELECT v.*, p.full_name as patient_name, p.patient_number, p.phone, p.gender, p.date_of_birth,
         w.name as ward_name, b.bed_number,
         (EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
-         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR b.id IS NOT NULL) AS is_inpatient,
+         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR (b.id IS NOT NULL AND b.status = 'occupied')) AS is_inpatient,
         COALESCE(SUM(
           CASE 
             WHEN bi.status = 'pending' THEN bi.total_price
@@ -179,7 +179,7 @@ router.get('/queue', protect, async (req, res) => {
       FROM visits v
       JOIN patients p ON v.patient_id::text = p.id::text
       LEFT JOIN billing_items bi ON bi.visit_id::text = v.id::text
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text)
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied')
       LEFT JOIN wards w ON b.ward_id::text = w.id::text
       ${whereClause}
       GROUP BY v.id, p.full_name, p.patient_number, p.phone, p.gender, p.date_of_birth, w.name, b.bed_number, b.id

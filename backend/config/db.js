@@ -1801,40 +1801,50 @@ async function runMigrationsAndSeed(p) {
   }
 }
 
-// Overwrite pool.query and pool.connect to automatically inject tenant context for RLS
-if (pool) {
-  const originalConnect = pool.connect;
-  const originalQuery = pool.query;
-
-  pool.connect = async function () {
-    const client = await originalConnect.apply(pool, arguments);
-    const pharmacyId = tenantStorage.getStore();
-    if (pharmacyId && !isInMemory) {
-      try {
-        await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
-      } catch (err) {
-        logger.error('Failed to set SET LOCAL in connect:', err.message);
-      }
+// Create stable pool proxy so all modules (controllers, models) retain the correct live instance
+const poolProxy = new Proxy({}, {
+  get(target, prop) {
+    if (prop === 'connect') {
+      return async function () {
+        const client = await pool.connect.apply(pool, arguments);
+        const pharmacyId = tenantStorage.getStore();
+        if (pharmacyId && !isInMemory && client && client.query) {
+          try {
+            await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
+          } catch (err) {
+            logger.error('Failed to set SET LOCAL in connect:', err.message);
+          }
+        }
+        return client;
+      };
     }
-    return client;
-  };
-
-  pool.query = async function (text, params) {
-    const pharmacyId = tenantStorage.getStore();
-    if (pharmacyId && !isInMemory) {
-      let client;
-      try {
-        client = await originalConnect.apply(pool);
-        await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
-        const res = await client.query(text, params);
-        return res;
-      } finally {
-        if (client) client.release();
-      }
-    } else {
-      return originalQuery.apply(pool, [text, params]);
+    if (prop === 'query') {
+      return async function (text, params) {
+        const pharmacyId = tenantStorage.getStore();
+        if (pharmacyId && !isInMemory) {
+          let client;
+          try {
+            client = await pool.connect();
+            await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
+            const res = await client.query(text, params);
+            return res;
+          } finally {
+            if (client && client.release) client.release();
+          }
+        } else {
+          return pool.query.apply(pool, [text, params]);
+        }
+      };
     }
-  };
-}
+    if (typeof pool[prop] === 'function') {
+      return pool[prop].bind(pool);
+    }
+    return pool[prop];
+  },
+  set(target, prop, value) {
+    pool[prop] = value;
+    return true;
+  }
+});
 
-module.exports = { pool, connectDB, tenantStorage };
+module.exports = { pool: poolProxy, connectDB, tenantStorage };

@@ -4,24 +4,25 @@ const { ROLE_PERMISSIONS } = require('../config/permissions');
 class UserModel {
   static async create({ full_name, email, password, role, pharmacy_id, custom_permissions }) {
     const perms = custom_permissions || ROLE_PERMISSIONS[role] || [];
+    const cleanEmail = email ? email.trim() : email;
     const result = await pool.query(`
       INSERT INTO users (full_name, email, password, role, pharmacy_id, permissions)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, full_name, email, role, is_active, pharmacy_id, permissions, created_at
-    `, [full_name, email, password, role, pharmacy_id, JSON.stringify(perms)]);
+    `, [full_name, cleanEmail, password, role, pharmacy_id, JSON.stringify(perms)]);
     return result.rows[0];
   }
 
   static async findByEmail(email, pharmacy_id = null) {
-    let query = `SELECT * FROM users WHERE email = $1 AND is_active = true`;
-    const params = [email];
-    if (pharmacy_id) { params.push(pharmacy_id); query += ` AND pharmacy_id = $2`; }
+    let query = `SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND is_active = true`;
+    const params = [email ? email.trim() : ''];
+    if (pharmacy_id) { params.push(pharmacy_id); query += ` AND pharmacy_id::text = $2::text`; }
     const result = await pool.query(query, params);
     return result.rows[0];
   }
 
   static async findByEmailGlobal(email) {
-    const result = await pool.query(`SELECT * FROM users WHERE email = $1 AND is_active = true`, [email]);
+    const result = await pool.query(`SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND is_active = true`, [email ? email.trim() : '']);
     return result.rows[0];
   }
 

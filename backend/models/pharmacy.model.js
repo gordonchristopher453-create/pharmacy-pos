@@ -119,6 +119,7 @@ class PharmacyModel {
   }
 
   static async findById(id) {
+    if (!id) return null;
     const result = await pool.query(`
       SELECT p.*,
         s.plan, s.status as subscription_status, s.expires_at, s.max_users, s.max_counters,
@@ -130,13 +131,14 @@ class PharmacyModel {
       FROM pharmacies p
       LEFT JOIN subscriptions s ON p.id = s.pharmacy_id
       LEFT JOIN pharmacy_settings ps ON p.id = ps.pharmacy_id
-      WHERE p.id = $1
-    `, [id]);
+      WHERE p.id::text = $1::text
+    `, [String(id)]);
     return result.rows[0];
   }
 
   static async findByEmail(email) {
-    const result = await pool.query(`SELECT * FROM pharmacies WHERE email = $1`, [email]);
+    if (!email) return null;
+    const result = await pool.query(`SELECT * FROM pharmacies WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))`, [email.trim()]);
     return result.rows[0];
   }
 

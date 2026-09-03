@@ -62,36 +62,39 @@ const login = async (req, res) => {
       return errorResponse(res, 400, 'Email and password are required');
     }
 
+    const cleanEmail = email ? email.trim() : '';
+
     // Check super admin first
-    const superAdmin = await SuperAdminModel.findByEmail(email);
+    const superAdmin = await SuperAdminModel.findByEmail(cleanEmail);
     if (superAdmin) {
       const isMatch = await bcrypt.compare(password, superAdmin.password);
-      if (!isMatch) return errorResponse(res, 401, 'Invalid email or password');
+      if (isMatch) {
+        const payload = { id: superAdmin.id, role: 'super_admin', is_super_admin: true };
+        const accessToken = generateAccessToken(payload);
+        const refreshToken = generateRefreshToken(payload);
 
-      const payload = { id: superAdmin.id, role: 'super_admin', is_super_admin: true };
-      const accessToken = generateAccessToken(payload);
-      const refreshToken = generateRefreshToken(payload);
+        await SuperAdminModel.updateLastLogin(superAdmin.id);
+        logger.info(`Super admin logged in: ${cleanEmail}`);
 
-      await SuperAdminModel.updateLastLogin(superAdmin.id);
-      logger.info(`Super admin logged in: ${email}`);
-
-      return successResponse(res, 200, 'Login successful', {
-        user: {
-          id: superAdmin.id,
-          full_name: superAdmin.full_name,
-          email: superAdmin.email,
-          role: 'super_admin',
-          is_super_admin: true,
-          pharmacy_id: null,
-          pharmacy: null
-        },
-        accessToken,
-        refreshToken
-      });
+        return successResponse(res, 200, 'Login successful', {
+          user: {
+            id: superAdmin.id,
+            full_name: superAdmin.full_name,
+            email: superAdmin.email,
+            role: 'super_admin',
+            is_super_admin: true,
+            pharmacy_id: null,
+            pharmacy: null
+          },
+          accessToken,
+          refreshToken
+        });
+      }
+      // If not matching super admin password, continue checking pharmacy user table below
     }
 
     // Check pharmacy user
-    const user = await UserModel.findByEmailGlobal(email);
+    const user = await UserModel.findByEmailGlobal(cleanEmail);
     if (!user) return errorResponse(res, 401, 'Invalid email or password');
 
     const isMatch = await bcrypt.compare(password, user.password);

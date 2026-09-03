@@ -89,7 +89,8 @@ class VisitModel {
     let q = `
       SELECT v.*, v.created_at as visit_date, p.full_name as patient_name, p.patient_number, p.gender,
              u.full_name as created_by_name,
-             (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status='pending') as pending_bills,
+             (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status IN ('pending', 'partial')) as pending_bills,
+             (SELECT COALESCE(SUM(CASE WHEN status='pending' THEN total_price WHEN status='partial' THEN GREATEST(0, total_price - COALESCE(paid_amount,0)) ELSE 0 END),0) FROM billing_items WHERE visit_id=v.id) as pending_amount,
              (SELECT COALESCE(SUM(total_price),0) FROM billing_items WHERE visit_id=v.id) as total_bill
       FROM visits v
       LEFT JOIN patients p ON v.patient_id=p.id

@@ -16,10 +16,15 @@ export const login = createAsyncThunk('auth/login', async (credentials, { reject
 export const logout = createAsyncThunk('auth/logout', async () => {
   try {
     const refreshToken = localStorage.getItem('refreshToken');
-    await api.post('/auth/logout', { refreshToken });
-    localStorage.clear();
+    if (refreshToken) {
+      await api.post('/auth/logout', { refreshToken }).catch(() => {});
+    }
   } catch {
-    localStorage.clear();
+    // Ignore network failures on logout
+  } finally {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('user');
   }
 });
 

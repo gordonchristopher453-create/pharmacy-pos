@@ -15,16 +15,18 @@ const createPharmacy = async (req, res) => {
   try {
     const cleanLicense = license_number && license_number.trim() ? license_number.trim() : null;
 
-    const [facilityEmailCheck, adminEmailCheck, licenseCheck] = await Promise.all([
-      client.query(`SELECT id FROM pharmacies WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email.trim()]),
-      client.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [admin_email.trim()]),
+    const [facilityEmailCheck, adminEmailCheck, superAdminCheck, licenseCheck] = await Promise.all([
+      client.query(`SELECT id FROM pharmacies WHERE LOWER(TRIM(email))=LOWER(TRIM($1)) LIMIT 1`, [email.trim()]),
+      client.query(`SELECT id FROM users WHERE LOWER(TRIM(email))=LOWER(TRIM($1)) LIMIT 1`, [admin_email.trim()]),
+      client.query(`SELECT id FROM super_admins WHERE LOWER(TRIM(email))=LOWER(TRIM($1)) LIMIT 1`, [admin_email.trim()]),
       cleanLicense
-        ? client.query(`SELECT id FROM pharmacies WHERE LOWER(license_number)=LOWER($1) LIMIT 1`, [cleanLicense])
+        ? client.query(`SELECT id FROM pharmacies WHERE LOWER(TRIM(license_number))=LOWER(TRIM($1)) LIMIT 1`, [cleanLicense])
         : Promise.resolve({ rows: [] }),
     ]);
 
     if (facilityEmailCheck.rows.length > 0) return errorResponse(res, 400, 'Facility email is already registered');
-    if (adminEmailCheck.rows.length > 0)    return errorResponse(res, 400, 'Admin email is already registered');
+    if (adminEmailCheck.rows.length > 0)    return errorResponse(res, 400, 'Admin email is already registered to another staff member');
+    if (superAdminCheck.rows.length > 0)    return errorResponse(res, 400, 'This email belongs to the Super Admin. Please specify a unique facility admin email address.');
     if (licenseCheck.rows.length > 0)       return errorResponse(res, 400, 'License number is already registered');
 
     await client.query('BEGIN');

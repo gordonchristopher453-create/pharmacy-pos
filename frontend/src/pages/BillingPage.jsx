@@ -233,9 +233,9 @@ export default function BillingPage() {
   const opdQueue = queue.filter(v => !v.is_inpatient && v.status !== 'inpatient');
   const inpatientQueue = queue.filter(v => v.is_inpatient || v.status === 'inpatient');
 
-  const [queueFilter, setQueueFilter] = useState('opd'); // 'opd' | 'all'
+  const [queueFilter, setQueueFilter] = useState('opd'); // 'opd' | 'inpatient' | 'all'
 
-  const activeQueueList = queueFilter === 'opd' ? opdQueue : queue;
+  const activeQueueList = queueFilter === 'opd' ? opdQueue : (queueFilter === 'inpatient' ? inpatientQueue : queue);
 
   const filteredQueue = activeQueueList.filter(v => 
     !search || 
@@ -520,6 +520,17 @@ export default function BillingPage() {
                   🩺 Outpatients Only ({opdQueue.length})
                 </button>
                 <button
+                  onClick={() => setQueueFilter('inpatient')}
+                  style={{
+                    padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                    border: '1px solid var(--border)', cursor: 'pointer',
+                    background: queueFilter === 'inpatient' ? 'var(--accent)' : 'var(--bg-surface)',
+                    color: queueFilter === 'inpatient' ? '#0F1612' : 'var(--text-muted)'
+                  }}
+                >
+                  🏥 Inpatients Only ({inpatientQueue.length})
+                </button>
+                <button
                   onClick={() => setQueueFilter('all')}
                   style={{
                     padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -528,7 +539,7 @@ export default function BillingPage() {
                     color: queueFilter === 'all' ? '#0F1612' : 'var(--text-muted)'
                   }}
                 >
-                  👥 All Pending ({queue.length})
+                  👥 All Visits ({queue.length})
                 </button>
               </div>
             </div>

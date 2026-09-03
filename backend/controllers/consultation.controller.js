@@ -254,7 +254,7 @@ const update = async (req, res) => {
 // ── PHARMACY QUEUE ────────────────────────────────────────────────────────────
 const getPharmacyQueue = async (req, res) => {
   try {
-    const { search, date_from, date_to, all_dates } = req.query;
+    const { search, date_from, date_to, all_dates, include_inpatient } = req.query;
     const pharmacyId = req.pharmacy_id || req.user?.pharmacy_id || null;
     const params = [pharmacyId];
     let extraClauses = '';
@@ -267,12 +267,31 @@ const getPharmacyQueue = async (req, res) => {
     if (date_from && date_to) {
       params.push(date_from);
       params.push(date_to);
-      extraClauses += ` AND ((v.created_at::date >= $${params.length - 1}::date AND v.created_at::date <= $${params.length}::date) OR (vp.latest_prescription_at::date >= $${params.length - 1}::date AND vp.latest_prescription_at::date <= $${params.length}::date))`;
+      extraClauses += ` AND (
+        (v.created_at::date >= $${params.length - 1}::date AND v.created_at::date <= $${params.length}::date)
+        OR (vp.latest_prescription_at::date >= $${params.length - 1}::date AND vp.latest_prescription_at::date <= $${params.length}::date)
+        OR ((v.created_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (v.created_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
+        OR ((vp.latest_prescription_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (vp.latest_prescription_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
+      )`;
     } else if (date_from) {
       params.push(date_from);
-      extraClauses += ` AND (v.created_at::date = $${params.length}::date OR vp.latest_prescription_at::date = $${params.length}::date)`;
+      extraClauses += ` AND (
+        v.created_at::date = $${params.length}::date 
+        OR vp.latest_prescription_at::date = $${params.length}::date
+        OR (v.created_at AT TIME ZONE 'UTC')::date = $${params.length}::date
+        OR (vp.latest_prescription_at AT TIME ZONE 'UTC')::date = $${params.length}::date
+      )`;
     } else if (all_dates !== 'true') {
-      extraClauses += ` AND (v.created_at::date = CURRENT_DATE OR vp.latest_prescription_at::date = CURRENT_DATE OR 1=1)`;
+      extraClauses += ` AND (v.created_at::date = CURRENT_DATE OR vp.latest_prescription_at::date = CURRENT_DATE OR (v.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE OR 1=1)`;
+    }
+
+    if (include_inpatient !== 'true') {
+      extraClauses += ` AND (
+        v.status != 'inpatient' 
+        AND LOWER(COALESCE(v.visit_type, '')) != 'inpatient'
+        AND NOT EXISTS (SELECT 1 FROM inpatient_admissions ia_ex WHERE ia_ex.visit_id::text = v.id::text AND ia_ex.status = 'admitted')
+        AND NOT EXISTS (SELECT 1 FROM beds b_ex WHERE b_ex.current_visit_id::text = v.id::text AND b_ex.status = 'occupied')
+      )`;
     }
 
     const query = `
