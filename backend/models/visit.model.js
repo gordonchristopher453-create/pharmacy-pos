@@ -29,7 +29,7 @@ class VisitModel {
       SELECT v.*, v.created_at as visit_date, p.full_name as patient_name, p.patient_number, p.gender, p.date_of_birth,
              vt.blood_pressure_systolic, vt.blood_pressure_diastolic,
              vt.pulse_rate, vt.temperature, vt.oxygen_saturation, vt.weight,
-             p.phone as patient_phone, u.full_name as created_by_name
+             p.phone as patient_phone, p.phone, u.full_name as created_by_name
       FROM visits v
       LEFT JOIN patients p ON v.patient_id=p.id
       LEFT JOIN users u ON v.created_by=u.id
@@ -88,10 +88,12 @@ class VisitModel {
 
     let q = `
       SELECT v.*, v.created_at as visit_date, p.full_name as patient_name, p.patient_number, p.gender,
+             p.date_of_birth, p.phone, p.phone as patient_phone, p.blood_group,
+             p.allergies, p.chronic_conditions, p.sha_number, p.national_id, p.address, p.county,
              u.full_name as created_by_name,
-             (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status IN ('pending', 'partial')) as pending_bills,
-             (SELECT COALESCE(SUM(CASE WHEN status='pending' THEN total_price WHEN status='partial' THEN GREATEST(0, total_price - COALESCE(paid_amount,0)) ELSE 0 END),0) FROM billing_items WHERE visit_id=v.id) as pending_amount,
-             (SELECT COALESCE(SUM(total_price),0) FROM billing_items WHERE visit_id=v.id) as total_bill
+      (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status IN ('pending', 'partial')) as pending_bills,
+      (SELECT COALESCE(SUM(CASE WHEN status='pending' THEN total_price WHEN status='partial' THEN GREATEST(0, total_price - COALESCE(paid_amount,0)) ELSE 0 END),0) FROM billing_items WHERE visit_id=v.id) as pending_amount,
+      (SELECT COALESCE(SUM(total_price),0) FROM billing_items WHERE visit_id=v.id) as total_bill
       FROM visits v
       LEFT JOIN patients p ON v.patient_id=p.id
       LEFT JOIN users u ON v.created_by=u.id
@@ -149,7 +151,14 @@ class VisitModel {
     params.push(limit);  q += ` LIMIT $${params.length}`;
     params.push(offset); q += ` OFFSET $${params.length}`;
     const result = await pool.query(q, params);
-    return result.rows;
+    const { decrypt } = require('../utils/encryption');
+    return result.rows.map(r => ({
+      ...r,
+      allergies: decrypt(r.allergies),
+      chronic_conditions: decrypt(r.chronic_conditions),
+      sha_number: decrypt(r.sha_number),
+      national_id: decrypt(r.national_id)
+    }));
   }
 
   static async getDailyStats(pharmacy_id, date) {

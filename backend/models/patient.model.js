@@ -116,14 +116,14 @@ class PatientModel {
         next_of_kin_phone=$11, next_of_kin_relation=$12, blood_group=$13,
         allergies=$14, chronic_conditions=$15, occupation=$16,
         marital_status=$17, emirates_id=$18, nabidh_consent=$19, passport_number=$20, updated_at=NOW()
-      WHERE id=$21 AND pharmacy_id=$22 RETURNING *
+      WHERE id::text=$21::text AND ($22::text IS NULL OR pharmacy_id::text=$22::text) RETURNING *
     `, [
-      full_name, date_of_birth || null, gender, national_id ? encrypt(national_id) : null, sha_number ? encrypt(sha_number) : null,
+      full_name, (date_of_birth && String(date_of_birth).trim() !== '') ? String(date_of_birth).trim() : null, gender, national_id ? encrypt(national_id) : null, sha_number ? encrypt(sha_number) : null,
       phone, email || null, address || null, county || null, next_of_kin_name || null,
       next_of_kin_phone || null, next_of_kin_relation || null, blood_group || null,
       allergies ? encrypt(allergies) : null, chronic_conditions ? encrypt(chronic_conditions) : null, occupation || null,
       marital_status || null, emirates_id || null, nabidh_consent || 'opt_out', passport_number || null,
-      id, pharmacy_id
+      String(id), pharmacy_id ? String(pharmacy_id) : null
     ]);
     return decryptPatient(result.rows[0]);
   }

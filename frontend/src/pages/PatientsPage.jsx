@@ -185,9 +185,47 @@ const PRIORITY = {
   emergency: { color: '#ef4444', bg: 'rgba(239,68,68,0.2)', label: 'EMERGENCY' },
 };
 
+const getExactAgeDetails = dob => {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (isNaN(birth.getTime())) return null;
+  const now = new Date();
+  if (birth > now) return null;
+
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  let days = now.getDate() - birth.getDate();
+
+  if (days < 0) {
+    months -= 1;
+    const prevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    days += prevMonth.getDate();
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  if (years < 0) return null;
+  return { years, months, days };
+};
+
 const getAge = dob => {
   if (!dob) return '—';
-  return Math.floor((Date.now() - new Date(dob)) / (365.25*24*60*60*1000)) + 'y';
+  const details = getExactAgeDetails(dob);
+  if (!details) return '—';
+  const { years, months, days } = details;
+
+  if (years === 0) {
+    if (months === 0) {
+      return `${days} day${days !== 1 ? 's' : ''}`;
+    }
+    return `${months} mo${months !== 1 ? 's' : ''}`;
+  }
+  if (years < 5 && months > 0) {
+    return `${years}y ${months}m`;
+  }
+  return `${years} yrs`;
 };
 
 const EMPTY_PATIENT = {
@@ -241,6 +279,9 @@ export default function PatientsPage() {
   const [showVisitModal, setShowVisitModal] = useState(false);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showEditPatientModal, setShowEditPatientModal] = useState(false);
+  const [editPatientForm, setEditPatientForm] = useState(EMPTY_PATIENT);
+  const [editSaving, setEditSaving] = useState(false);
   const [profileModalTab, setProfileModalTab] = useState('timeline');
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [expandedVisitId, setExpandedVisitId] = useState(null);
@@ -277,6 +318,7 @@ export default function PatientsPage() {
   const isReceptionist = user?.role === 'receptionist';
 
   const pf  = (k,v) => setPatientForm(p => ({...p,[k]:v}));
+  const epf = (k,v) => setEditPatientForm(p => ({...p,[k]:v}));
   const vf  = (k,v) => setVisitForm(p => ({...p,[k]:v}));
   const vtf = (k,v) => setVitalsForm(p => ({...p,[k]:v}));
 
@@ -512,6 +554,63 @@ export default function PatientsPage() {
       if (showProfileModal) fetchPatientProfile(selectedPatient.id);
     } catch (e) { toast.error(e.response?.data?.message || 'Failed to check in patient'); }
     finally { setSaving(false); }
+  };
+
+  const handleOpenEditPatient = (patient) => {
+    if (!patient) return;
+    let dobStr = '';
+    if (patient.date_of_birth) {
+      try {
+        dobStr = new Date(patient.date_of_birth).toISOString().split('T')[0];
+      } catch {
+        dobStr = String(patient.date_of_birth).split('T')[0];
+      }
+    }
+    setEditPatientForm({
+      full_name: patient.full_name || '',
+      date_of_birth: dobStr,
+      gender: patient.gender || '',
+      id_type: patient.passport_number ? 'passport' : 'national_id',
+      national_id: patient.national_id || '',
+      passport_number: patient.passport_number || '',
+      phone: patient.phone || '',
+      email: patient.email || '',
+      address: patient.address || '',
+      county: patient.county || '',
+      marital_status: patient.marital_status || '',
+      occupation: patient.occupation || '',
+      insurance_provider: patient.insurance_provider || 'cash',
+      next_of_kin_name: patient.next_of_kin_name || '',
+      next_of_kin_phone: patient.next_of_kin_phone || '',
+      next_of_kin_relation: patient.next_of_kin_relation || ''
+    });
+    setShowEditPatientModal(true);
+  };
+
+  const handleSaveEditPatient = async () => {
+    if (!selectedPatient) return;
+    if (!editPatientForm.full_name?.trim()) { toast.error('Full legal name is required'); return; }
+    if (!editPatientForm.phone?.trim()) { toast.error('Phone contact number is required'); return; }
+
+    setEditSaving(true);
+    try {
+      const payload = {
+        ...editPatientForm,
+        date_of_birth: editPatientForm.date_of_birth || null,
+        national_id: editPatientForm.id_type === 'national_id' ? editPatientForm.national_id : null,
+        passport_number: editPatientForm.id_type === 'passport' ? editPatientForm.passport_number : null
+      };
+      await api.put(`/patients/${selectedPatient.id}`, payload);
+      toast.success('✅ Patient profile updated successfully');
+      setShowEditPatientModal(false);
+      fetchPatientProfile(selectedPatient.id);
+      fetchPatients();
+      fetchQueue();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to update patient profile');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const handleOpenCollectModal = async (visit) => {
@@ -1441,6 +1540,9 @@ export default function PatientsPage() {
                   </button>
                 </div>
 
+                <Btn size="sm" variant="outline" onClick={() => handleOpenEditPatient(selectedPatient)} icon={Edit2}>
+                  Edit Details
+                </Btn>
                 <Btn size="sm" onClick={() => { handleOpenCheckIn(selectedPatient); }} icon={Plus}>
                   Check In Patient
                 </Btn>
@@ -1468,15 +1570,28 @@ export default function PatientsPage() {
                       {selectedPatient.gender === 'male' ? '👨' : selectedPatient.gender === 'female' ? '👩' : '👤'}
                     </div>
                     <h4 className="text-md font-extrabold text-[var(--text-primary)]">{selectedPatient.full_name}</h4>
-                    <p className="text-xs text-[var(--text-muted)] font-semibold mt-1">
-                      {selectedPatient.gender} · {getAge(selectedPatient.date_of_birth)}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                      <span className="text-xs text-[var(--text-muted)] font-semibold capitalize">
+                        {selectedPatient.gender || 'Unknown'}
+                      </span>
+                      <span className="text-[var(--border)]">•</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-extrabold border border-emerald-500/30">
+                        🎂 Exact Age: {getAge(selectedPatient.date_of_birth)}
+                      </span>
+                      {selectedPatient.date_of_birth && (
+                        <span className="text-[11px] text-[var(--text-muted)] font-mono">
+                          (DOB: {new Date(selectedPatient.date_of_birth).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })})
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Details List */}
                   <div className="p-4 bg-[var(--bg-surface)] border border-[var(--border)] rounded-2xl space-y-3.5">
                     {[
-                      { label: 'Primary Contact Phone', value: selectedPatient.phone, icon: Phone },
+                      { label: 'Date of Birth', value: selectedPatient.date_of_birth ? new Date(selectedPatient.date_of_birth).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—', icon: Calendar },
+                      { label: 'Exact Calculated Age', value: getAge(selectedPatient.date_of_birth), icon: Clock },
+                      { label: 'Primary Contact Phone', value: selectedPatient.phone || '—', icon: Phone },
                       { label: 'National ID / Passport Number', value: selectedPatient.national_id || selectedPatient.passport_number || '—', icon: Shield },
                       { label: 'Insurance / Payment Scheme', value: selectedPatient.insurance_provider || 'Cash Tender', icon: CreditCard },
                       { label: 'Residential County', value: selectedPatient.county || '—', icon: MapPin },
@@ -1526,6 +1641,185 @@ export default function PatientsPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* ── EDIT PATIENT PROFILE MODAL ── */}
+      {showEditPatientModal && selectedPatient && (
+        <div className="fixed inset-0 bg-[#00000085] backdrop-blur-xs z-[1050] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[var(--bg-surface)] rounded-2xl border border-[var(--border)] w-full max-w-xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+            {/* Header */}
+            <div className="p-5 border-b border-[var(--border)] bg-[var(--bg-surface)] flex justify-between items-center">
+              <div>
+                <h3 className="text-base font-black text-[var(--text-primary)] flex items-center gap-2">
+                  <Edit2 size={18} className="text-[var(--accent)]" /> Edit Patient Profile
+                </h3>
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  Update demographic details, date of birth, and contact information for {selectedPatient.full_name} ({selectedPatient.patient_number}).
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowEditPatientModal(false)}
+                className="w-8 h-8 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-y-auto space-y-4">
+              <Input 
+                label="Full Legal Name *" 
+                value={editPatientForm.full_name} 
+                onChange={e => epf('full_name', e.target.value)} 
+                placeholder="Enter patient full legal name" 
+                icon={User} 
+              />
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+                  <div className="sm:col-span-7">
+                    <Input 
+                      label="Date of Birth" 
+                      type="date" 
+                      max={new Date().toISOString().split('T')[0]}
+                      value={editPatientForm.date_of_birth} 
+                      onChange={e => epf('date_of_birth', e.target.value)} 
+                      icon={Calendar} 
+                    />
+                  </div>
+
+                  <div className="sm:col-span-5">
+                    <div className="w-full">
+                      <label className="text-xs font-semibold text-[var(--text-muted)] block mb-1.5 uppercase tracking-wider">
+                        Age (Years)
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type="number"
+                          min="0"
+                          max="130"
+                          placeholder="e.g. 28"
+                          value={(() => {
+                            const d = getExactAgeDetails(editPatientForm.date_of_birth);
+                            return d !== null ? d.years : '';
+                          })()}
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val === '') {
+                              epf('date_of_birth', '');
+                              return;
+                            }
+                            const yrs = parseInt(val, 10);
+                            if (!isNaN(yrs) && yrs >= 0) {
+                              const today = new Date();
+                              const birthYear = today.getFullYear() - yrs;
+                              const m = String(today.getMonth() + 1).padStart(2, '0');
+                              const d = String(today.getDate()).padStart(2, '0');
+                              epf('date_of_birth', `${birthYear}-${m}-${d}`);
+                            }
+                          }}
+                          className="w-full pl-3.5 pr-10 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-sm font-bold text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-all"
+                        />
+                        <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[var(--text-muted)]">
+                          yrs
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Exact Age Feedback */}
+                {editPatientForm.date_of_birth && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-xs animate-fade-in shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                        <CheckCircle size={14} /> Calculated Patient Age:
+                      </span>
+                      <span className="text-emerald-400 font-black text-sm">
+                        {getAge(editPatientForm.date_of_birth)}
+                      </span>
+                    </div>
+                    {(() => {
+                      const d = getExactAgeDetails(editPatientForm.date_of_birth);
+                      return d ? (
+                        <span className="text-[11px] font-mono text-emerald-300 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-md">
+                          Exact: {d.years}y {d.months}m {d.days}d
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Select 
+                  label="Biological Gender *" 
+                  value={editPatientForm.gender} 
+                  onChange={e => epf('gender', e.target.value)}
+                  icon={UserRound}
+                >
+                  <option value="">Select gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </Select>
+
+                <Input 
+                  label="Primary Contact Phone *" 
+                  value={editPatientForm.phone} 
+                  onChange={e => epf('phone', e.target.value)} 
+                  placeholder="+254 7XX XXX XXX" 
+                  icon={Phone} 
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input 
+                  label="National ID Number" 
+                  value={editPatientForm.national_id} 
+                  onChange={e => epf('national_id', e.target.value)} 
+                  placeholder="e.g. 12345678" 
+                  icon={Shield} 
+                />
+
+                <Input 
+                  label="Passport Number" 
+                  value={editPatientForm.passport_number} 
+                  onChange={e => epf('passport_number', e.target.value)} 
+                  placeholder="e.g. A1234567" 
+                  icon={Shield} 
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input 
+                  label="Residential County" 
+                  value={editPatientForm.county} 
+                  onChange={e => epf('county', e.target.value)} 
+                  placeholder="e.g. Busia" 
+                  icon={MapPin} 
+                />
+
+                <Input 
+                  label="Address / Estate" 
+                  value={editPatientForm.address} 
+                  onChange={e => epf('address', e.target.value)} 
+                  placeholder="e.g. Town Center" 
+                  icon={MapPin} 
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-surface)] flex justify-end gap-3">
+              <Btn variant="ghost" onClick={() => setShowEditPatientModal(false)}>
+                Cancel
+              </Btn>
+              <Btn onClick={handleSaveEditPatient} loading={editSaving} icon={CheckCircle}>
+                Save Changes
+              </Btn>
+            </div>
           </div>
         </div>
       )}
@@ -1588,15 +1882,81 @@ export default function PatientsPage() {
                     icon={User} 
                   />
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <Input 
-                      label="Date of Birth *" 
-                      type="date" 
-                      value={patientForm.date_of_birth} 
-                      onChange={e => pf('date_of_birth', e.target.value)} 
-                      icon={Calendar} 
-                    />
-                    
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+                      <div className="sm:col-span-7">
+                        <Input 
+                          label="Date of Birth *" 
+                          type="date" 
+                          max={new Date().toISOString().split('T')[0]}
+                          value={patientForm.date_of_birth} 
+                          onChange={e => pf('date_of_birth', e.target.value)} 
+                          icon={Calendar} 
+                        />
+                      </div>
+
+                      <div className="sm:col-span-5">
+                        <div className="w-full">
+                          <label className="text-xs font-semibold text-[var(--text-muted)] block mb-1.5 uppercase tracking-wider">
+                            Age (Years)
+                          </label>
+                          <div className="relative">
+                            <input 
+                              type="number"
+                              min="0"
+                              max="130"
+                              placeholder="e.g. 28"
+                              value={(() => {
+                                const d = getExactAgeDetails(patientForm.date_of_birth);
+                                return d !== null ? d.years : '';
+                              })()}
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === '') {
+                                  pf('date_of_birth', '');
+                                  return;
+                                }
+                                const yrs = parseInt(val, 10);
+                                if (!isNaN(yrs) && yrs >= 0) {
+                                  const today = new Date();
+                                  const birthYear = today.getFullYear() - yrs;
+                                  const m = String(today.getMonth() + 1).padStart(2, '0');
+                                  const d = String(today.getDate()).padStart(2, '0');
+                                  pf('date_of_birth', `${birthYear}-${m}-${d}`);
+                                }
+                              }}
+                              className="w-full pl-3.5 pr-10 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-sm font-bold text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-all"
+                            />
+                            <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[var(--text-muted)]">
+                              yrs
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Live Exact Age Feedback */}
+                    {patientForm.date_of_birth && (
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-xs animate-fade-in shadow-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                            <CheckCircle size={14} /> Calculated Patient Age:
+                          </span>
+                          <span className="text-emerald-400 font-black text-sm">
+                            {getAge(patientForm.date_of_birth)}
+                          </span>
+                        </div>
+                        {(() => {
+                          const d = getExactAgeDetails(patientForm.date_of_birth);
+                          return d ? (
+                            <span className="text-[11px] font-mono text-emerald-300 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-md">
+                              Exact: {d.years}y {d.months}m {d.days}d
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
+                    )}
+
                     <Select 
                       label="Biological Gender *" 
                       value={patientForm.gender} 
