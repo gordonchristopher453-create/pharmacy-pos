@@ -89,36 +89,107 @@ const { pool } = require('../config/db');
 const getDailySummaryReport = async (req, res) => {
   try {
     const pharmacy_id = req.pharmacy_id;
-    const date = req.query.date || new Date().toISOString().split('T')[0];
-    const [visits, sales, labs, billing] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0];
+
+    const userRole = (req.user?.role || '').toLowerCase();
+    const userPerms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+    const isAdminOrHR = [
+      'super_admin', 'facility_admin', 'admin', 'hr', 'hr_manager', 'accountant'
+    ].includes(userRole) ||
+      userPerms.includes('can_view_financial_reports') ||
+      userPerms.includes('can_view_revenue_reports') ||
+      userPerms.includes('can_view_all_reports');
+
+    let date_from = today;
+    let date_to = today;
+    if (isAdminOrHR) {
+      date_from = req.query.date_from || req.query.start_date || req.query.date || today;
+      date_to = req.query.date_to || req.query.end_date || req.query.date || date_from;
+    } else {
+      const singleDate = req.query.date || today;
+      date_from = singleDate;
+      date_to = singleDate;
+    }
+
+    const [visits, sales, labs, billing, billingBreakdown] = await Promise.all([
       pool.query(`
         SELECT v.*, p.full_name as patient_name, p.patient_number, p.gender, p.date_of_birth, p.phone
         FROM visits v JOIN patients p ON v.patient_id::text=p.id::text
-        WHERE (v.pharmacy_id::text=$1::text OR v.pharmacy_id IS NULL) AND DATE(v.visit_date)=$2 ORDER BY v.visit_date ASC
-      `, [pharmacy_id, date]),
+        WHERE (v.pharmacy_id::text=$1::text OR v.pharmacy_id IS NULL) 
+          AND DATE(v.visit_date) BETWEEN $2 AND $3 
+        ORDER BY v.visit_date ASC
+      `, [pharmacy_id, date_from, date_to]),
       pool.query(`
         SELECT COALESCE(SUM(total_amount),0) as total_sales, COUNT(*) as total_transactions,
                COALESCE(SUM(CASE WHEN payment_method='mpesa' THEN total_amount ELSE 0 END),0) as mpesa,
                COALESCE(SUM(CASE WHEN payment_method='cash' THEN total_amount ELSE 0 END),0) as cash
-        FROM sales WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]),
+        FROM sales 
+        WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) 
+          AND DATE(created_at) BETWEEN $2 AND $3
+      `, [pharmacy_id, date_from, date_to]),
       pool.query(`
         SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='Completed') as completed
-        FROM lab_requests WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]),
+        FROM lab_requests 
+        WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) 
+          AND DATE(created_at) BETWEEN $2 AND $3
+      `, [pharmacy_id, date_from, date_to]),
       pool.query(`
-        SELECT COALESCE(SUM(amount),0) as total_collected, COUNT(*) as total_payments
-        FROM payments WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]).catch(() => ({ rows: [{ total_collected: 0, total_payments: 0 }] })),
+        SELECT 
+          COUNT(*) AS total_items,
+          COALESCE(SUM(total_price),0) AS total_billed,
+          COALESCE(SUM(CASE 
+            WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(paid_amount, total_price)
+            WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
+            ELSE 0 END), 0) AS total_collected,
+          COALESCE(SUM(CASE 
+            WHEN status='pending' THEN total_price
+            WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
+            ELSE 0 END), 0) AS total_pending,
+          COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0) AS total_waived,
+          COALESCE(SUM(CASE WHEN LOWER(payment_method)='cash' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS cash_collected,
+          COALESCE(SUM(CASE WHEN LOWER(payment_method)='mpesa' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS mpesa_collected,
+          COALESCE(SUM(CASE WHEN LOWER(payment_method) IN ('insurance','nhif','sha') OR status IN ('insurance','nhif','sha') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS insurance_collected,
+          COALESCE(SUM(CASE WHEN LOWER(payment_method)='bank' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS bank_collected
+        FROM billing_items 
+        WHERE (facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL)) 
+          AND (
+            (DATE(created_at) BETWEEN $2 AND $3)
+            OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
+          )
+      `, [pharmacy_id, date_from, date_to]).catch(() => ({ rows: [{ total_collected: 0, total_billed: 0, total_pending: 0 }] })),
+      pool.query(`
+        SELECT 
+          COALESCE(LOWER(payment_method), 'cash') AS payment_method,
+          COUNT(*) AS count,
+          COALESCE(SUM(CASE 
+            WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(paid_amount, total_price)
+            WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
+            ELSE 0 END), 0) AS amount
+        FROM billing_items
+        WHERE (facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
+          AND (
+            (DATE(created_at) BETWEEN $2 AND $3)
+            OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
+          )
+          AND (status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (status='partial' AND paid_amount > 0))
+        GROUP BY COALESCE(LOWER(payment_method), 'cash')
+        ORDER BY amount DESC
+      `, [pharmacy_id, date_from, date_to]).catch(() => ({ rows: [] }))
     ]);
     const pharmacy = await pool.query(`SELECT name, address, phone FROM pharmacies WHERE id::text=$1::text`, [pharmacy_id]);
     return successResponse(res, 200, 'Daily summary fetched', {
-      date,
+      date: date_from,
+      date_from,
+      date_to,
+      is_daily: date_from === date_to,
+      can_filter_dates: isAdminOrHR,
+      user_role: req.user?.role,
       pharmacy: pharmacy.rows[0] || {},
       visits: visits.rows,
       sales_summary: sales.rows[0],
       lab_summary: labs.rows[0],
       billing_summary: billing.rows[0],
+      by_method: billingBreakdown.rows || [],
     });
   } catch (e) { return errorResponse(res, 500, e.message); }
 };

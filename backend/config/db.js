@@ -1098,7 +1098,8 @@ async function runMigrationsAndSeed(p) {
       { name: 'auth_code', type: 'VARCHAR(150)' },
       { name: 'copay_amount', type: 'NUMERIC DEFAULT 0' },
       { name: 'paid_at', type: 'TIMESTAMPTZ' },
-      { name: 'payment_method', type: 'VARCHAR(50)' }
+      { name: 'payment_method', type: 'VARCHAR(50)' },
+      { name: 'collected_by', type: 'INT' }
     ];
     for (const col of billingColumns) {
       try {

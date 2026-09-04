@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { printBillingReceipt } from '../utils/printBillingReceipt';
 import { printCombinedPatientReceipt } from '../utils/printCombinedPatientReceipt';
 import { printMedicalInvoice } from '../utils/printMedicalInvoice';
+import FinancialSummaryReport from '../components/FinancialSummaryReport';
 import { 
   Loader, RefreshCw, Search, Plus, X, Printer, DollarSign, CheckCircle, 
   TrendingUp, Smartphone, Shield, CreditCard, AlertCircle, FileText, 
@@ -60,6 +61,17 @@ const PAYMENT_METHODS = [
 
 export default function BillingPage() {
   const { user } = useSelector(s => s.auth);
+  const userRole = (user?.role || '').toLowerCase();
+  const userPerms = Array.isArray(user?.permissions) ? user.permissions : [];
+  const isAdminOrHR = [
+    'super_admin', 'facility_admin', 'admin', 'hr', 'hr_manager', 'accountant'
+  ].includes(userRole) ||
+    userPerms.includes('can_view_financial_reports') ||
+    userPerms.includes('can_view_revenue_reports') ||
+    userPerms.includes('can_view_all_reports');
+
+  const isReceptionistOnly = !isAdminOrHR && (userRole === 'receptionist' || userRole === 'cashier');
+
   const [tab, setTab] = useState('dashboard'); // 'dashboard' | 'queue' | 'history'
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -257,20 +269,27 @@ export default function BillingPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
-            <Calendar size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
-            <input type="date" value={queueDateFrom} onChange={e => {
-              const val = e.target.value;
-              setQueueDateFrom(val);
-              if (queueDateTo < val) setQueueDateTo(val);
-            }} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginLeft: 4 }}>To:</span>
-            <input type="date" value={queueDateTo} onChange={e => {
-              const val = e.target.value;
-              setQueueDateTo(val);
-            }} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer' }} />
-          </div>
+          {isAdminOrHR ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
+              <Calendar size={14} style={{ color: 'var(--accent)' }} />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+              <input type="date" value={queueDateFrom} onChange={e => {
+                const val = e.target.value;
+                setQueueDateFrom(val);
+                if (queueDateTo < val) setQueueDateTo(val);
+              }} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer' }} />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginLeft: 4 }}>To:</span>
+              <input type="date" value={queueDateTo} onChange={e => {
+                const val = e.target.value;
+                setQueueDateTo(val);
+              }} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer' }} />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 12px' }}>
+              <Calendar size={14} style={{ color: 'var(--accent)' }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>📅 Shift: Today ({today})</span>
+            </div>
+          )}
 
           <Btn variant="ghost" onClick={() => { fetchQueue(); fetchSummary(); }}>
             <RefreshCw size={15}/> Refresh
@@ -313,181 +332,13 @@ export default function BillingPage() {
         </button>
       </div>
 
-      {/* TAB 1: EXECUTIVE DASHBOARD */}
+      {/* TAB 1: EXECUTIVE FINANCIAL SUMMARY REPORT */}
       {tab === 'dashboard' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Top Key Performance Indicators (KPIs) */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-            <Card style={{ padding: 18, borderLeft: '4px solid var(--accent)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Billed Today</span>
-                <div style={{ padding: 6, background: 'var(--accent)15', borderRadius: 8, color: 'var(--accent)' }}><DollarSign size={16}/></div>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{fmt(totalBilled)}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{summary?.total_items || 0} Total Billed Items</div>
-            </Card>
-
-            <Card style={{ padding: 18, borderLeft: '4px solid #10b981' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Collections Today</span>
-                <div style={{ padding: 6, background: '#10b98115', borderRadius: 8, color: '#10b981' }}><CheckCircle size={16}/></div>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#10b981', fontFamily: 'monospace' }}>{fmt(totalCollected)}</div>
-              <div style={{ fontSize: 11, color: '#10b981', marginTop: 4, fontWeight: 600 }}>{collectionRate}% Collection Rate</div>
-            </Card>
-
-            <Card style={{ padding: 18, borderLeft: '4px solid #ef4444' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Outstanding Arrears</span>
-                <div style={{ padding: 6, background: '#ef444415', borderRadius: 8, color: '#ef4444' }}><AlertCircle size={16}/></div>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#ef4444', fontFamily: 'monospace' }}>{fmt(totalPending)}</div>
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{summary?.pending_count || 0} Bills Pending Collection</div>
-            </Card>
-
-            <Card style={{ padding: 18, borderLeft: '4px solid #8b5cf6' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Waived / Exemptions</span>
-                <div style={{ padding: 6, background: '#8b5cf615', borderRadius: 8, color: '#8b5cf6' }}><Shield size={16}/></div>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#8b5cf6', fontFamily: 'monospace' }}>{fmt(totalWaived)}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{summary?.waived_count || 0} Waived Services</div>
-            </Card>
-          </div>
-
-          {/* Payment Method Breakdown Bar */}
-          <Card style={{ padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div>
-                <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0 }}>💵 Collections by Payment Channel</h3>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Breakdown of collected funds across Cash, M-Pesa, Insurance, and Bank</p>
-              </div>
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#10b981', background: '#10b98115', padding: '4px 10px', borderRadius: 20 }}>
-                Total: {fmt(totalCollected)}
-              </span>
-            </div>
-
-            {/* Visual Progress Bar */}
-            <div style={{ height: 12, background: 'var(--bg-elevated)', borderRadius: 6, overflow: 'hidden', display: 'flex', marginBottom: 16 }}>
-              {totalCollected > 0 ? (
-                <>
-                  <div style={{ width: `${(mpesaCollected / totalCollected) * 100}%`, background: '#10b981' }} title="M-Pesa" />
-                  <div style={{ width: `${(cashCollected / totalCollected) * 100}%`, background: '#f59e0b' }} title="Cash" />
-                  <div style={{ width: `${(insuranceCollected / totalCollected) * 100}%`, background: '#3b82f6' }} title="Insurance/SHA" />
-                  <div style={{ width: `${(bankCollected / totalCollected) * 100}%`, background: '#8b5cf6' }} title="Bank" />
-                </>
-              ) : (
-                <div style={{ width: '100%', background: 'var(--border)' }} />
-              )}
-            </div>
-
-            {/* Method Breakdown Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-              <div style={{ padding: 12, background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#10b981', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-                  <Smartphone size={16} /> M-PESA
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(mpesaCollected)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {totalCollected > 0 ? Math.round((mpesaCollected / totalCollected) * 100) : 0}% of collections
-                </div>
-              </div>
-
-              <div style={{ padding: 12, background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f59e0b', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-                  <Wallet size={16} /> CASH
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(cashCollected)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {totalCollected > 0 ? Math.round((cashCollected / totalCollected) * 100) : 0}% of collections
-                </div>
-              </div>
-
-              <div style={{ padding: 12, background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#3b82f6', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-                  <Shield size={16} /> INSURANCE / SHA
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(insuranceCollected)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {totalCollected > 0 ? Math.round((insuranceCollected / totalCollected) * 100) : 0}% of claims
-                </div>
-              </div>
-
-              <div style={{ padding: 12, background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#8b5cf6', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
-                  <CreditCard size={16} /> BANK / CHEQUE
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(bankCollected)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {totalCollected > 0 ? Math.round((bankCollected / totalCollected) * 100) : 0}% direct transfers
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Department Revenue Breakdown & Live Ledger */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
-            {/* Revenue by Service Category */}
-            <Card style={{ padding: 20 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>🏥 Revenue by Service Category</h3>
-              {byType.length === 0 ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 30, fontSize: 13 }}>No revenue data recorded for this date</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {byType.map((cat, i) => (
-                    <div key={i} style={{ padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: 8, border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, textTransform: 'capitalize' }}>{cat.item_type || 'General'}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{cat.count} service(s) billed</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                          {fmt(cat.amount)}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>
-                          Collected: {fmt(cat.collected)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            {/* Live Cashier Payment Ledger Feed */}
-            <Card style={{ padding: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0 }}>⚡ Live Recent Payments Ledger</h3>
-                <Btn size="sm" variant="ghost" onClick={() => setTab('history')}>View All</Btn>
-              </div>
-
-              {recentTx.length === 0 ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 30, fontSize: 13 }}>No recent payment activity for today</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-                  {recentTx.map((tx, i) => (
-                    <div key={i} style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderRadius: 8, border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{tx.patient_name || 'Patient'}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                          {tx.item_name} · <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{tx.patient_number}</span>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: tx.status === 'paid' ? '#10b981' : 'var(--text-primary)', fontFamily: 'monospace' }}>
-                          {fmt(tx.total_price)}
-                        </div>
-                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700, textTransform: 'uppercase', background: (STATUS_COLORS[tx.status] || '#10b981') + '20', color: STATUS_COLORS[tx.status] || '#10b981' }}>
-                          {tx.payment_method || tx.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-          </div>
-        </div>
+        <FinancialSummaryReport 
+          onOpenBill={openBill} 
+          initialDateFrom={queueDateFrom} 
+          initialDateTo={queueDateTo} 
+        />
       )}
 
       {/* TAB 2: ACTIVE QUEUE */}
@@ -545,57 +396,69 @@ export default function BillingPage() {
             </div>
 
             {/* Date Range Calendar Filter Controls */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-                <Calendar size={16} style={{ color: 'var(--accent)' }} />
-                <span>Filter Queue By Date Range:</span>
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
-                  <input
-                    type="date"
-                    value={queueDateFrom}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setQueueDateFrom(val);
-                      if (queueDateTo < val) setQueueDateTo(val);
-                    }}
-                    style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
-                  />
+            {isAdminOrHR ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                  <Calendar size={16} style={{ color: 'var(--accent)' }} />
+                  <span>Filter Queue By Date Range:</span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
-                  <input
-                    type="date"
-                    value={queueDateTo}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setQueueDateTo(val);
-                    }}
-                    style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
-                  />
-                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+                    <input
+                      type="date"
+                      value={queueDateFrom}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setQueueDateFrom(val);
+                        if (queueDateTo < val) setQueueDateTo(val);
+                      }}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    />
+                  </div>
 
-                <Btn
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    const todayStr = new Date().toISOString().split('T')[0];
-                    setQueueDateFrom(todayStr);
-                    setQueueDateTo(todayStr);
-                  }}
-                  style={{
-                    background: queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'var(--bg-elevated)',
-                    color: queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-primary)'
-                  }}
-                >
-                  📅 Reset to Today
-                </Btn>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+                    <input
+                      type="date"
+                      value={queueDateTo}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setQueueDateTo(val);
+                      }}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    />
+                  </div>
+
+                  <Btn
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      setQueueDateFrom(todayStr);
+                      setQueueDateTo(todayStr);
+                    }}
+                    style={{
+                      background: queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-primary)'
+                    }}
+                  >
+                    📅 Reset to Today
+                  </Btn>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                  <Calendar size={14} style={{ color: 'var(--accent)' }} />
+                  <span>Reception Desk Queue: <strong style={{ color: 'var(--text-primary)' }}>Today ({today})</strong></span>
+                </div>
+                <span style={{ fontSize: 11, background: '#10b98120', color: '#10b981', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>
+                  Active Shift
+                </span>
+              </div>
+            )}
           </div>
 
           {loading ? (
