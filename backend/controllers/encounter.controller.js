@@ -168,6 +168,16 @@ const getPatientTimeline = async (req, res) => {
     }
 
     const visitIds = visits.map(v => String(v.id));
+    if (visitIds.length === 0) {
+      return successResponse(res, 200, 'Encounters fetched successfully', {
+        visits: [],
+        clinics: [],
+        doctors: [],
+        stats: { total_visits: 0, completed_visits: 0, pending_visits: 0, emergency_visits: 0 }
+      });
+    }
+
+    const inPlaceholders = visitIds.map((_, i) => `$${i + 1}`).join(', ');
 
     // Safe individual queries with individual fallbacks
     const safeQuery = async (sql, params = []) => {
@@ -196,67 +206,67 @@ const getPatientTimeline = async (req, res) => {
         `SELECT e.*, u.full_name as doctor_name
          FROM encounters e
          LEFT JOIN users u ON e.doctor_id::text = u.id::text
-         WHERE e.visit_id::text = ANY($1::text[]) ORDER BY e.id DESC`,
-        [visitIds]
+         WHERE e.visit_id::text IN (${inPlaceholders}) ORDER BY e.id DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT c.*, u.full_name as doctor_name
          FROM consultations c
          LEFT JOIN users u ON c.doctor_id::text = u.id::text
-         WHERE c.visit_id::text = ANY($1::text[]) ORDER BY c.created_at DESC`,
-        [visitIds]
+         WHERE c.visit_id::text IN (${inPlaceholders}) ORDER BY c.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT vt.*, u.full_name as recorded_by_name
          FROM vitals vt
          LEFT JOIN users u ON vt.recorded_by::text = u.id::text
-         WHERE vt.visit_id::text = ANY($1::text[]) ORDER BY vt.created_at DESC`,
-        [visitIds]
+         WHERE vt.visit_id::text IN (${inPlaceholders}) ORDER BY vt.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT p.*, u.full_name as doctor_name
          FROM prescriptions p
          LEFT JOIN users u ON p.doctor_id::text = u.id::text
-         WHERE p.visit_id::text = ANY($1::text[]) ORDER BY p.created_at DESC`,
-        [visitIds]
+         WHERE p.visit_id::text IN (${inPlaceholders}) ORDER BY p.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT l.*, u.full_name as doctor_name, t.full_name as technician_name
          FROM lab_requests l
          LEFT JOIN users u ON l.doctor_id::text = u.id::text
          LEFT JOIN users t ON l.resulted_by::text = t.id::text
-         WHERE l.visit_id::text = ANY($1::text[]) ORDER BY l.created_at DESC`,
-        [visitIds]
+         WHERE l.visit_id::text IN (${inPlaceholders}) ORDER BY l.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT pr.*, u.full_name as doctor_name
          FROM procedures pr
          LEFT JOIN users u ON pr.doctor_id::text = u.id::text
-         WHERE pr.visit_id::text = ANY($1::text[]) ORDER BY pr.created_at DESC`,
-        [visitIds]
+         WHERE pr.visit_id::text IN (${inPlaceholders}) ORDER BY pr.created_at DESC`,
+        visitIds
       ),
       safeQuery(
-        `SELECT b.* FROM billing_items b WHERE b.visit_id::text = ANY($1::text[]) ORDER BY b.created_at DESC`,
-        [visitIds]
+        `SELECT b.* FROM billing_items b WHERE b.visit_id::text IN (${inPlaceholders}) ORDER BY b.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT iro.*, u.full_name as doctor_name, nu.full_name as nurse_name
          FROM injection_room_orders iro
          LEFT JOIN users u ON iro.doctor_id::text = u.id::text
          LEFT JOIN users nu ON iro.administered_by::text = nu.id::text
-         WHERE iro.visit_id::text = ANY($1::text[]) ORDER BY iro.created_at DESC`,
-        [visitIds]
+         WHERE iro.visit_id::text IN (${inPlaceholders}) ORDER BY iro.created_at DESC`,
+        visitIds
       ),
       safeQuery(
-        `SELECT wt.* FROM ward_transfers wt WHERE wt.visit_id::text = ANY($1::text[]) ORDER BY wt.created_at DESC`,
-        [visitIds]
+        `SELECT wt.* FROM ward_transfers wt WHERE wt.visit_id::text IN (${inPlaceholders}) ORDER BY wt.created_at DESC`,
+        visitIds
       ),
       safeQuery(
         `SELECT ee.*, u.full_name as actor_name
          FROM encounter_events ee
          LEFT JOIN users u ON ee.actor_id::text = u.id::text
-         WHERE ee.visit_id::text = ANY($1::text[]) ORDER BY ee.created_at DESC`,
-        [visitIds]
+         WHERE ee.visit_id::text IN (${inPlaceholders}) ORDER BY ee.created_at DESC`,
+        visitIds
       )
     ]);
 

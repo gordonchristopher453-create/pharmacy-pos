@@ -2,7 +2,24 @@ import { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
-import { Plus, X, Loader, RefreshCw, Search, CheckCircle, Clock } from 'lucide-react';
+import { Plus, X, Loader, RefreshCw, Search, CheckCircle, Clock, DollarSign, CreditCard, AlertTriangle, ShieldCheck, Check, FileText } from 'lucide-react';
+
+const PAYMENT_METHODS = [
+  { value: 'mpesa', label: '📱 M-Pesa' },
+  { value: 'cash', label: '💵 Cash' },
+  { value: 'insurance', label: '🛡️ Private Insurance' },
+  { value: 'sha', label: '🏥 SHA (Social Health Authority)' },
+  { value: 'bank', label: '🏦 Bank Transfer / Card' }
+];
+
+const INJECTION_PRESETS = [
+  { name: 'IM Injection Administration Fee', code: 'PROC-IM', price: 200, desc: 'Intramuscular injection administration & sterile consumables' },
+  { name: 'IV Injection / Cannulation Fee', code: 'PROC-IV-AB', price: 500, desc: 'Intravenous cannulation, butterfly & slow IV push' },
+  { name: 'Subcutaneous (SC) Injection Fee', code: 'PROC-SC', price: 200, desc: 'Subcutaneous injection administration' },
+  { name: 'IV Normal Saline Infusion Setup', code: 'PROC-IV-NS', price: 600, desc: 'IV Giving set, 500ml Normal Saline, Cannula & Monitoring' },
+  { name: 'Wound Dressing & Injection Consumables', code: 'PROC-DRESS', price: 350, desc: 'Sterile swabs, spirit, needles & plaster' },
+  { name: 'Tetanus Toxoid (TT) Injection Service', code: 'INJ-TT', price: 400, desc: 'Tetanus toxoid vaccine administration' }
+];
 
 const getAge = dob => {
   if (!dob) return '—';
@@ -159,6 +176,119 @@ export default function InjectionPage() {
   const [completingProc, setCompletingProc] = useState(null);
   const [panelTab, setPanelTab] = useState('drugs');
 
+  // Billing & Payment States
+  const [billingSummary, setBillingSummary] = useState({ total_billed: 0, total_paid: 0, total_pending: 0, all_paid: false, items: [] });
+  const [billingItems, setBillingItems] = useState([]);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [payingBill, setPayingBill] = useState(false);
+  const [payForm, setPayForm] = useState({
+    payment_method: 'mpesa',
+    reference_number: '',
+    amount: '',
+    notes: '',
+    insurance_provider: '',
+    member_number: '',
+    auth_code: '',
+    item_ids: []
+  });
+  const [showAddServiceModal, setShowAddServiceModal] = useState(false);
+  const [addingService, setAddingService] = useState(false);
+  const [serviceForm, setServiceForm] = useState({
+    item_name: '',
+    service_code: '',
+    unit_price: '',
+    quantity: 1,
+    description: ''
+  });
+
+  const fetchBillingSummary = async (visitId) => {
+    if (!visitId) return;
+    setBillingLoading(true);
+    try {
+      const res = await api.get('/injection-room/visit/' + visitId + '/billing-summary');
+      const d = res.data.data || {};
+      setBillingSummary(d);
+      setBillingItems(d.items || []);
+    } catch {
+      // ignore
+    } finally {
+      setBillingLoading(false);
+    }
+  };
+
+  const handlePayBill = async () => {
+    if (!selected?.id) return;
+    const amt = parseFloat(payForm.amount);
+    if (isNaN(amt) || amt <= 0) {
+      toast.error('Please enter a valid payment amount');
+      return;
+    }
+    setPayingBill(true);
+    try {
+      const pendingIds = billingItems.filter(b => b.status === 'pending').map(b => b.id);
+      const payload = {
+        payment_method: payForm.payment_method,
+        reference_number: payForm.reference_number || (payForm.payment_method === 'cash' ? 'CASH-' + Date.now().toString().slice(-6) : ''),
+        amount: amt,
+        insurance_provider: payForm.insurance_provider,
+        member_number: payForm.member_number,
+        auth_code: payForm.auth_code,
+        notes: payForm.notes,
+        item_ids: payForm.item_ids && payForm.item_ids.length > 0 ? payForm.item_ids : pendingIds
+      };
+      await api.post(`/billing/visit/${selected.id}/pay`, payload);
+      toast.success('✅ Payment recorded successfully & injection items cleared');
+      setShowPayModal(false);
+      fetchBillingSummary(selected.id);
+      fetchVisitOrders(selected.id);
+      fetchVisits();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Payment collection failed');
+    } finally {
+      setPayingBill(false);
+    }
+  };
+
+  const handleAddService = async () => {
+    if (!selected?.id) return;
+    if (!serviceForm.item_name.trim()) {
+      toast.error('Service or procedure name is required');
+      return;
+    }
+    const price = parseFloat(serviceForm.unit_price) || 0;
+    setAddingService(true);
+    try {
+      await api.post(`/injection-room/visit/${selected.id}/bill-service`, {
+        ...serviceForm,
+        unit_price: price
+      });
+      toast.success('Injection service added to bill');
+      setShowAddServiceModal(false);
+      setServiceForm({ item_name: '', service_code: '', unit_price: '', quantity: 1, description: '' });
+      fetchBillingSummary(selected.id);
+      fetchVisitOrders(selected.id);
+      fetchVisits();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to bill service');
+    } finally {
+      setAddingService(false);
+    }
+  };
+
+  const handleWaiveItem = async (itemId) => {
+    if (!confirm('Are you sure you want to waive this injection fee?')) return;
+    try {
+      await api.put(`/billing/item/${itemId}/waive`, { waive_reason: 'Waived at Injection Room' });
+      toast.success('Item fee waived');
+      fetchBillingSummary(selected.id);
+      fetchVisitOrders(selected.id);
+      fetchVisits();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to waive item');
+    }
+  };
+
   const fetchServicePrices = async () => {
     try {
       const { data } = await api.get('/billing/service-prices');
@@ -257,6 +387,7 @@ export default function InjectionPage() {
     setPanelTab('drugs');
     fetchPatientProcedures(visit.id);
     fetchVisitOrders(visit.id);
+    fetchBillingSummary(visit.id);
     try {
       const cr = await api.get('/consultations/visit/' + visit.id);
       const con = cr.data.data;
@@ -274,7 +405,8 @@ export default function InjectionPage() {
       const res = await api.post(`/injection-room/visit/${selected.id}/orders`, newOrder);
       setOrders(p => [...p, res.data.data]);
       setNewOrder(emptyOrder); setProductSearch(''); setShowAddOrder(false);
-      toast.success('Order added');
+      fetchBillingSummary(selected.id);
+      toast.success('Order added and billed to patient');
     } catch (e) { toast.error(e.response?.data?.message || 'Failed to add order'); }
     finally { setSaving(false); }
   };
@@ -383,6 +515,65 @@ export default function InjectionPage() {
               )}
               {allDone && <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: '#10b981', textAlign: 'center' }}>✅ All done — ready to return</div>}
             </Card>
+
+            {/* Injection Billing Card */}
+            <Card style={{ padding: 16, border: billingSummary.total_pending > 0 ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(16,185,129,0.35)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 1 }}>Injection Billing</div>
+                {billingSummary.total_pending > 0 ? (
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 12, background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontWeight: 800 }}>⚠️ UNPAID</span>
+                ) : (
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 12, background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 800 }}>✅ CLEARED</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Total Billed:</span>
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>KES {Number(billingSummary.total_billed || 0).toLocaleString()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Paid / Settled:</span>
+                <span style={{ fontWeight: 700, color: '#10b981' }}>KES {Number(billingSummary.total_paid || 0).toLocaleString()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Balance Pending:</span>
+                <span style={{ fontWeight: 700, color: billingSummary.total_pending > 0 ? '#ef4444' : 'var(--text-muted)' }}>
+                  KES {Number(billingSummary.total_pending || 0).toLocaleString()}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {billingSummary.total_pending > 0 && (
+                  <Btn
+                    size="sm"
+                    variant="success"
+                    onClick={() => {
+                      setPayForm({
+                        payment_method: 'mpesa',
+                        reference_number: '',
+                        amount: String(billingSummary.total_pending || ''),
+                        notes: 'Injection room services payment',
+                        insurance_provider: '',
+                        member_number: '',
+                        auth_code: '',
+                        item_ids: []
+                      });
+                      setShowPayModal(true);
+                    }}
+                    style={{ width: '100%', justifyContent: 'center', fontWeight: 700 }}
+                  >
+                    <DollarSign size={13} /> Collect Payment (KES {billingSummary.total_pending})
+                  </Btn>
+                )}
+                <Btn
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setShowAddServiceModal(true)}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  <Plus size={13} /> + Bill Service Fee
+                </Btn>
+              </div>
+            </Card>
           </div>
 
           <Card style={{ padding: 20 }}>
@@ -408,6 +599,25 @@ export default function InjectionPage() {
                 }}
               >
                 🩺 Procedures & Treatments ({procedures.length})
+              </button>
+              <button
+                onClick={() => setPanelTab('billing')}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 700,
+                  color: panelTab === 'billing' ? 'var(--accent)' : 'var(--text-muted)',
+                  borderBottom: panelTab === 'billing' ? '2px solid var(--accent)' : 'none',
+                  paddingBottom: 6,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+              >
+                💳 Injection Billing ({billingItems.length})
+                {billingSummary.total_pending > 0 && (
+                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(239,68,68,0.2)', color: '#ef4444', fontWeight: 800 }}>
+                    KES {billingSummary.total_pending}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -537,11 +747,25 @@ export default function InjectionPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                             <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 4, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 }}>{order.route}</span>
                             <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: `${sc}20`, color: sc }}>{STATUS_LABELS[order.status]}</span>
+                            {order.is_paid ? (
+                              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: 'rgba(16,185,129,0.15)', color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <Check size={11} /> Paid {order.total_price > 0 ? `(KES ${order.total_price})` : ''} {order.payment_method ? `· ${order.payment_method.toUpperCase()}` : ''}
+                              </span>
+                            ) : Number(order.total_price) > 0 ? (
+                              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: 'rgba(239,68,68,0.15)', color: '#ef4444', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <AlertTriangle size={11} /> Unpaid: KES {order.total_price}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 600, background: 'rgba(107,114,128,0.15)', color: '#9ca3af' }}>
+                                ⚪ Included / Free
+                              </span>
+                            )}
                           </div>
                           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)' }}>
                             {order.dosage && <span>💊 {order.dosage}</span>}
                             {order.frequency && <span>🔄 {order.frequency}</span>}
                             {order.quantity && <span>📦 Qty: {order.quantity}</span>}
+                            {Number(order.unit_price) > 0 && <span>💵 Price: KES {order.unit_price}</span>}
                           </div>
                           {order.instructions && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>📋 {order.instructions}</div>}
                           {order.administered_at && <div style={{ fontSize: 11, color: '#10b981', marginTop: 4 }}>✅ Given at {new Date(order.administered_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}</div>}
@@ -555,16 +779,40 @@ export default function InjectionPage() {
                               rows={3}
                               style={{ width:'100%', padding:'8px 10px', background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:6, color:'var(--text-primary)', fontSize:11, outline:'none', fontFamily:'DM Sans, sans-serif', resize:'vertical', boxSizing:'border-box' }}
                             />
-                            {order.status === 'pending' && (
-                              <Btn size="sm" variant="success" onClick={() => handleAdminister(order.id)} disabled={administering === order.id}>
-                                {administering === order.id ? <Loader size={12} style={{ animation: 'spin 0.8s linear infinite' }} /> : <CheckCircle size={12} />} Mark as Given
-                              </Btn>
-                            )}
-                            {order.status === 'administered' && (
-                              <Btn size="sm" variant="ghost" onClick={() => handleAdminister(order.id)} disabled={administering === order.id}>
-                                💾 Update Notes
-                              </Btn>
-                            )}
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {!order.is_paid && Number(order.total_price) > 0 && (
+                                <Btn
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => {
+                                    setPayForm({
+                                      payment_method: 'mpesa',
+                                      reference_number: '',
+                                      amount: String(order.total_price || ''),
+                                      notes: `Payment for ${order.drug_name}`,
+                                      insurance_provider: '',
+                                      member_number: '',
+                                      auth_code: '',
+                                      item_ids: order.billing_item_id ? [order.billing_item_id] : []
+                                    });
+                                    setShowPayModal(true);
+                                  }}
+                                  style={{ padding: '4px 10px', fontSize: 11 }}
+                                >
+                                  <CreditCard size={12} /> Pay (KES {order.total_price})
+                                </Btn>
+                              )}
+                              {order.status === 'pending' && (
+                                <Btn size="sm" variant="success" onClick={() => handleAdminister(order.id)} disabled={administering === order.id} style={{ padding: '4px 10px', fontSize: 11 }}>
+                                  {administering === order.id ? <Loader size={12} style={{ animation: 'spin 0.8s linear infinite' }} /> : <CheckCircle size={12} />} Mark as Given
+                                </Btn>
+                              )}
+                              {order.status === 'administered' && (
+                                <Btn size="sm" variant="ghost" onClick={() => handleAdminister(order.id)} disabled={administering === order.id} style={{ padding: '4px 10px', fontSize: 11 }}>
+                                  💾 Update Notes
+                                </Btn>
+                              )}
+                            </div>
                           </div>
                       </div>
                     </div>
@@ -692,6 +940,169 @@ export default function InjectionPage() {
               </div>
             )}
 
+            {panelTab === 'billing' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>💳 Injection Services & Fees Billing</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Real-time billing items and payment settlement for visit #{selected.visit_number}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <Btn size="sm" variant="ghost" onClick={() => fetchBillingSummary(selected.id)}>
+                      <RefreshCw size={12} /> Refresh
+                    </Btn>
+                    <Btn size="sm" variant="secondary" onClick={() => setShowAddServiceModal(true)}>
+                      <Plus size={12} /> + Bill Service Fee
+                    </Btn>
+                    {billingSummary.total_pending > 0 && (
+                      <Btn
+                        size="sm"
+                        variant="success"
+                        onClick={() => {
+                          setPayForm({
+                            payment_method: 'mpesa',
+                            reference_number: '',
+                            amount: String(billingSummary.total_pending || ''),
+                            notes: 'Settling all pending injection room charges',
+                            insurance_provider: '',
+                            member_number: '',
+                            auth_code: '',
+                            item_ids: []
+                          });
+                          setShowPayModal(true);
+                        }}
+                        style={{ fontWeight: 700 }}
+                      >
+                        <DollarSign size={13} /> Collect Full Payment (KES {billingSummary.total_pending})
+                      </Btn>
+                    )}
+                  </div>
+                </div>
+
+                {/* Financial Overview Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
+                  <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Total Billed</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>KES {Number(billingSummary.total_billed || 0).toLocaleString()}</div>
+                  </div>
+                  <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid rgba(16,185,129,0.3)' }}>
+                    <div style={{ fontSize: 11, color: '#10b981', marginBottom: 4 }}>Paid / Settled</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: '#10b981' }}>KES {Number(billingSummary.total_paid || 0).toLocaleString()}</div>
+                  </div>
+                  <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bg-elevated)', border: billingSummary.total_pending > 0 ? '1px solid rgba(239,68,68,0.4)' : '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, color: billingSummary.total_pending > 0 ? '#ef4444' : 'var(--text-muted)', marginBottom: 4 }}>Pending Collection</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: billingSummary.total_pending > 0 ? '#ef4444' : 'var(--text-muted)' }}>
+                      KES {Number(billingSummary.total_pending || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Financial Clearance</div>
+                    <div>
+                      {billingSummary.total_pending > 0 ? (
+                        <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontWeight: 800 }}>
+                          ⚠️ Payment Pending
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 800 }}>
+                          ✅ Fully Cleared
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Items Table */}
+                {billingItems.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-faint)', background: 'var(--bg-elevated)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>💳</div>
+                    <div style={{ fontSize: 14 }}>No billing items found for injection services in this visit.</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Adding a drug order automatically bills the medication and administration fee.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {billingItems.map((item) => {
+                      const isPaid = item.status === 'paid';
+                      const isWaived = item.status === 'waived';
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            padding: '14px 16px',
+                            borderRadius: 8,
+                            background: 'var(--bg-elevated)',
+                            border: `1px solid ${isPaid ? 'rgba(16,185,129,0.3)' : isWaived ? 'var(--border)' : 'rgba(239,68,68,0.3)'}`,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: 12,
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 200 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{item.item_name}</span>
+                              {item.service_code && (
+                                <span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'monospace', background: 'var(--accent-soft)', padding: '1px 6px', borderRadius: 4 }}>
+                                  {item.service_code}
+                                </span>
+                              )}
+                              <span style={{
+                                fontSize: 11, padding: '2px 8px', borderRadius: 12, fontWeight: 700,
+                                background: isPaid ? 'rgba(16,185,129,0.15)' : isWaived ? 'rgba(107,114,128,0.15)' : 'rgba(239,68,68,0.15)',
+                                color: isPaid ? '#10b981' : isWaived ? '#9ca3af' : '#ef4444'
+                              }}>
+                                {isPaid ? '✅ Paid' : isWaived ? '⚪ Waived' : '⏳ Pending'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                              <span>Qty: {item.quantity}</span>
+                              <span>Unit Price: KES {Number(item.unit_price || 0).toLocaleString()}</span>
+                              <span>Total: <strong style={{ color: 'var(--text-primary)' }}>KES {Number(item.total_price || 0).toLocaleString()}</strong></span>
+                              {item.payment_method && <span>Method: <strong>{item.payment_method.toUpperCase()}</strong></span>}
+                              {item.reference_number && <span>Ref: {item.reference_number}</span>}
+                            </div>
+                          </div>
+
+                          {!isPaid && !isWaived && (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleWaiveItem(item.id)}
+                                style={{ fontSize: 11, color: 'var(--text-muted)' }}
+                              >
+                                Waive
+                              </Btn>
+                              <Btn
+                                size="sm"
+                                variant="success"
+                                onClick={() => {
+                                  setPayForm({
+                                    payment_method: 'mpesa',
+                                    reference_number: '',
+                                    amount: String(item.total_price || ''),
+                                    notes: `Settling ${item.item_name}`,
+                                    insurance_provider: '',
+                                    member_number: '',
+                                    auth_code: '',
+                                    item_ids: [item.id]
+                                  });
+                                  setShowPayModal(true);
+                                }}
+                                style={{ fontSize: 11 }}
+                              >
+                                <CreditCard size={12} /> Pay KES {item.total_price}
+                              </Btn>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <Btn variant="success" onClick={handleReturnToDoctor} disabled={returning} style={{ width: '100%', justifyContent: 'center', padding: '12px 0' }}>
                 {returning ? <Loader size={15} style={{ animation: 'spin 0.8s linear infinite' }} /> : <CheckCircle size={15} />}
@@ -700,6 +1111,230 @@ export default function InjectionPage() {
             </div>
           </Card>
         </div>
+
+        {/* Modal: Collect Payment */}
+        {showPayModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: '100%', maxWidth: 460, boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>💳 Collect Injection Payment</h3>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Patient: {selected.patient_name} · Visit #{selected.visit_number}</div>
+                </div>
+                <button onClick={() => setShowPayModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={18} /></button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>Payment Method</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
+                    {PAYMENT_METHODS.map(m => (
+                      <button
+                        key={m.value}
+                        type="button"
+                        onClick={() => setPayForm(p => ({ ...p, payment_method: m.value }))}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          border: payForm.payment_method === m.value ? '2px solid var(--accent)' : '1px solid var(--border)',
+                          background: payForm.payment_method === m.value ? 'var(--accent-soft)' : 'var(--bg-elevated)',
+                          color: payForm.payment_method === m.value ? 'var(--accent)' : 'var(--text-primary)'
+                        }}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Amount to Collect (KES)</label>
+                  <input
+                    type="number"
+                    value={payForm.amount}
+                    onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
+                    placeholder="Enter amount in KES"
+                    style={{ ...inp, fontSize: 15, fontWeight: 700 }}
+                  />
+                </div>
+
+                {payForm.payment_method === 'mpesa' && (
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>M-Pesa Transaction Code</label>
+                    <input
+                      type="text"
+                      value={payForm.reference_number}
+                      onChange={e => setPayForm(p => ({ ...p, reference_number: e.target.value.toUpperCase() }))}
+                      placeholder="e.g. QRT987654"
+                      style={{ ...inp, textTransform: 'uppercase' }}
+                    />
+                  </div>
+                )}
+
+                {(payForm.payment_method === 'insurance' || payForm.payment_method === 'sha') && (
+                  <>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Provider / Scheme</label>
+                      <input
+                        type="text"
+                        value={payForm.insurance_provider}
+                        onChange={e => setPayForm(p => ({ ...p, insurance_provider: e.target.value }))}
+                        placeholder={payForm.payment_method === 'sha' ? 'Social Health Authority (SHA)' : 'e.g. Jubilee, AAR, CIC'}
+                        style={inp}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Member #</label>
+                        <input
+                          type="text"
+                          value={payForm.member_number}
+                          onChange={e => setPayForm(p => ({ ...p, member_number: e.target.value }))}
+                          placeholder="Member ID"
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Pre-Auth / Claim Code</label>
+                        <input
+                          type="text"
+                          value={payForm.auth_code}
+                          onChange={e => setPayForm(p => ({ ...p, auth_code: e.target.value }))}
+                          placeholder="Auth Code"
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Notes (Optional)</label>
+                  <input
+                    type="text"
+                    value={payForm.notes}
+                    onChange={e => setPayForm(p => ({ ...p, notes: e.target.value }))}
+                    placeholder="e.g. Injection fee paid at station"
+                    style={inp}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <Btn variant="ghost" onClick={() => setShowPayModal(false)} style={{ flex: 1, justifyContent: 'center' }}>Cancel</Btn>
+                  <Btn variant="success" onClick={handlePayBill} disabled={payingBill} style={{ flex: 2, justifyContent: 'center', fontWeight: 700 }}>
+                    {payingBill ? <Loader size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Check size={14} />} Confirm Payment (KES {payForm.amount || 0})
+                  </Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Bill Injection Service */}
+        {showAddServiceModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>💉 Bill Injection Service / Fee</h3>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Add standard administration fee or consumable to patient bill</div>
+                </div>
+                <button onClick={() => setShowAddServiceModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={18} /></button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                    Quick Select Standard Procedure
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, maxHeight: 160, overflowY: 'auto' }}>
+                    {INJECTION_PRESETS.map((p, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setServiceForm({
+                            item_name: p.name,
+                            service_code: p.code,
+                            unit_price: String(p.price),
+                            quantity: 1,
+                            description: p.desc
+                          });
+                        }}
+                        style={{
+                          textAlign: 'left',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          background: 'var(--bg-elevated)',
+                          border: serviceForm.service_code === p.code ? '2px solid var(--accent)' : '1px solid var(--border)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>{p.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700, marginTop: 2 }}>KES {p.price}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Service / Procedure Name *</label>
+                  <input
+                    type="text"
+                    value={serviceForm.item_name}
+                    onChange={e => setServiceForm(p => ({ ...p, item_name: e.target.value }))}
+                    placeholder="e.g. IM Injection Administration Fee"
+                    style={inp}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Price (KES) *</label>
+                    <input
+                      type="number"
+                      value={serviceForm.unit_price}
+                      onChange={e => setServiceForm(p => ({ ...p, unit_price: e.target.value }))}
+                      placeholder="0"
+                      style={inp}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Quantity</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={serviceForm.quantity}
+                      onChange={e => setServiceForm(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))}
+                      style={inp}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Description / Notes</label>
+                  <input
+                    type="text"
+                    value={serviceForm.description}
+                    onChange={e => setServiceForm(p => ({ ...p, description: e.target.value }))}
+                    placeholder="Optional notes"
+                    style={inp}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <Btn variant="ghost" onClick={() => setShowAddServiceModal(false)} style={{ flex: 1, justifyContent: 'center' }}>Cancel</Btn>
+                  <Btn variant="success" onClick={handleAddService} disabled={addingService} style={{ flex: 2, justifyContent: 'center', fontWeight: 700 }}>
+                    {addingService ? <Loader size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Plus size={14} />} Add to Patient Bill
+                  </Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
@@ -788,6 +1423,7 @@ export default function InjectionPage() {
               {filtered.map(v => {
                 const pendingCount = (v.orders || []).filter(o => o.status?.toLowerCase() === 'pending').length;
                 const doneCount = (v.orders || []).filter(o => o.status?.toLowerCase() === 'administered').length;
+                const hasUnpaid = (v.orders || []).some(o => !o.is_paid && Number(o.total_price) > 0);
                 return (
                   <Card key={v.id} style={{ padding: '14px 18px', cursor: 'pointer', borderLeft: '5px solid #f59e0b' }}
                     onClick={() => openPatient(v)}
@@ -805,6 +1441,11 @@ export default function InjectionPage() {
                             <>
                               <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(245,158,11,0.2)', color: '#f59e0b', fontWeight: 700 }}>⏳ {pendingCount} pending</span>
                               <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(16,185,129,0.2)', color: '#10b981', fontWeight: 700 }}>✅ {doneCount} given</span>
+                              {hasUnpaid ? (
+                                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(239,68,68,0.2)', color: '#ef4444', fontWeight: 700 }}>⚠️ Unpaid Bill</span>
+                              ) : (
+                                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(16,185,129,0.2)', color: '#10b981', fontWeight: 700 }}>💳 Cleared</span>
+                              )}
                             </>
                           ) : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No orders yet</span>}
                           {v.temperature && <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>T {v.temperature}°C</span>}

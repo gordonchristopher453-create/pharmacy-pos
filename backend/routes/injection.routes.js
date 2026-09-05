@@ -28,17 +28,84 @@ router.get('/', async (req, res) => {
             'quantity', iro.quantity, 'status', iro.status, 'instructions', iro.instructions,
             'administered_at', iro.administered_at, 'notes', iro.notes,
             'product_id', iro.product_id,
-            'payment_status', (
-              SELECT CASE WHEN EXISTS (
-                SELECT 1 FROM billing_items bi
-                WHERE bi.visit_id::text = iro.visit_id::text
-                  AND bi.status = 'paid'
-                  AND (LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%' OR bi.item_type = 'prescription')
-              ) OR NOT EXISTS (
-                SELECT 1 FROM billing_items bi2
-                WHERE bi2.visit_id::text = iro.visit_id::text AND bi2.status = 'pending'
-              ) THEN 'paid' ELSE 'pending' END
-            )
+            'billing_item_id', (
+              SELECT bi.id FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ),
+            'payment_status', COALESCE((
+              SELECT bi.status FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ), 'unbilled'),
+            'unit_price', COALESCE((
+              SELECT bi.unit_price FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ), 0),
+            'total_price', COALESCE((
+              SELECT bi.total_price FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ), 0),
+            'paid_amount', COALESCE((
+              SELECT bi.paid_amount FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ), 0),
+            'payment_method', (
+              SELECT bi.payment_method FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ),
+            'is_paid', COALESCE((
+              SELECT (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'corporate', 'settled', 'cleared', 'waived'))
+              FROM billing_items bi
+              WHERE bi.visit_id::text = iro.visit_id::text AND bi.status != 'cancelled'
+                AND (
+                  LOWER(bi.item_name) LIKE '%' || LOWER(iro.drug_name) || '%'
+                  OR LOWER(iro.drug_name) LIKE '%' || LOWER(bi.item_name) || '%'
+                  OR bi.item_type = 'injection'
+                )
+              ORDER BY (bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'waived')) DESC, bi.created_at DESC
+              LIMIT 1
+            ), false)
           ) ORDER BY iro.created_at DESC
         ) FILTER (WHERE iro.id IS NOT NULL) as orders
       FROM visits v
@@ -96,8 +163,28 @@ router.get('/', async (req, res) => {
       WHERE (pharmacy_id::text = $1::text OR pharmacy_id IS NULL) AND DATE(created_at) = $2
     `, [req.pharmacy_id, d]);
 
+    const visitsWithBilling = (result.rows || []).map(v => {
+      const orders = v.orders || [];
+      const totalBilled = orders.reduce((sum, o) => sum + (parseFloat(o.total_price) || 0), 0);
+      const totalPaid = orders.filter(o => o.is_paid).reduce((sum, o) => sum + (parseFloat(o.total_price) || 0), 0);
+      const totalPending = orders.filter(o => !o.is_paid).reduce((sum, o) => sum + (parseFloat(o.total_price) || 0), 0);
+      const allPaid = orders.length > 0 && orders.every(o => o.is_paid);
+      const hasPending = orders.some(o => !o.is_paid);
+      return {
+        ...v,
+        orders,
+        injection_billing_summary: {
+          total_billed: totalBilled,
+          total_paid: totalPaid,
+          total_pending: totalPending,
+          all_paid: allPaid,
+          has_pending: hasPending
+        }
+      };
+    });
+
     return successResponse(res, 200, 'Injection room fetched', {
-      visits: result.rows,
+      visits: visitsWithBilling,
       stats: stats.rows[0]
     });
   } catch (error) {
@@ -161,9 +248,10 @@ router.get("/history", async (req, res) => {
 });
 
 // Get orders for a specific visit
+// Get orders for a specific visit with complete billing details
 router.get(['/visit/:visit_id', '/visit/:visit_id/orders'], async (req, res) => {
   try {
-    const result = await pool.query(`
+    const ordersRes = await pool.query(`
       SELECT iro.*, COALESCE(u.full_name, 'Staff Nurse') as nurse_name, COALESCE(u.full_name, 'Staff Nurse') as administered_by_name, p.full_name as prescribed_by_name
       FROM injection_room_orders iro
       LEFT JOIN users u ON iro.administered_by::text = u.id::text
@@ -171,13 +259,120 @@ router.get(['/visit/:visit_id', '/visit/:visit_id/orders'], async (req, res) => 
       WHERE iro.visit_id::text = $1::text AND (iro.pharmacy_id::text = $2::text OR iro.pharmacy_id IS NULL)
       ORDER BY iro.created_at DESC
     `, [req.params.visit_id, req.pharmacy_id]);
-    return successResponse(res, 200, 'Orders fetched', result.rows);
+
+    const billRes = await pool.query(`
+      SELECT * FROM billing_items
+      WHERE visit_id::text = $1::text AND status != 'cancelled'
+      ORDER BY created_at ASC
+    `, [req.params.visit_id]);
+
+    const allBills = billRes.rows || [];
+    const enrichedOrders = ordersRes.rows.map(o => {
+      const drugLower = (o.drug_name || '').trim().toLowerCase();
+      const firstWord = drugLower.split(' ')[0];
+      const match = allBills.find(b => {
+        const bName = (b.item_name || b.description || '').toLowerCase();
+        return bName === drugLower ||
+               bName.includes(drugLower) ||
+               drugLower.includes(bName) ||
+               (firstWord.length >= 3 && bName.includes(firstWord));
+      });
+
+      const isPaid = match ? ['paid', 'insurance', 'sha', 'nhif', 'corporate', 'settled', 'cleared', 'waived'].includes((match.status || '').toLowerCase()) : false;
+
+      return {
+        ...o,
+        billing_item_id: match ? match.id : null,
+        payment_status: match ? match.status : 'unbilled',
+        is_paid: isPaid,
+        unit_price: match ? parseFloat(match.unit_price || 0) : 0,
+        total_price: match ? parseFloat(match.total_price || (match.unit_price * match.quantity) || 0) : 0,
+        paid_amount: match ? parseFloat(match.paid_amount || 0) : 0,
+        payment_method: match ? match.payment_method : null
+      };
+    });
+
+    const injectionBills = allBills.filter(b => b.item_type === 'injection' || (b.item_name || '').toLowerCase().includes('injection'));
+    const totalBilled = injectionBills.reduce((acc, b) => acc + parseFloat(b.total_price || (b.unit_price * b.quantity) || 0), 0);
+    const totalPaid = injectionBills.filter(b => ['paid', 'insurance', 'sha', 'waived'].includes((b.status || '').toLowerCase())).reduce((acc, b) => acc + parseFloat(b.total_price || b.paid_amount || 0), 0);
+    const totalPending = Math.max(0, totalBilled - totalPaid);
+
+    const billingSummary = {
+      total_billed: totalBilled,
+      total_paid: totalPaid,
+      total_pending: totalPending,
+      all_paid: enrichedOrders.length > 0 ? enrichedOrders.every(o => o.is_paid) : true,
+      has_unpaid: enrichedOrders.some(o => !o.is_paid),
+      items: injectionBills
+    };
+
+    // Attach summary property directly onto the array for seamless frontend compatibility
+    enrichedOrders.billing_summary = billingSummary;
+    enrichedOrders.billing_items = injectionBills;
+
+    return successResponse(res, 200, 'Orders fetched', enrichedOrders);
   } catch (error) {
-    return errorResponse(res, 500, 'Failed to fetch orders');
+    console.error('Failed to fetch orders:', error.message);
+    return errorResponse(res, 500, 'Failed to fetch orders: ' + error.message);
   }
 });
 
-// Add drug order to injection room
+// Explicit billing summary endpoint for injection room
+router.get('/visit/:visit_id/billing-summary', async (req, res) => {
+  try {
+    const billRes = await pool.query(`
+      SELECT * FROM billing_items
+      WHERE visit_id::text = $1::text AND status != 'cancelled'
+      ORDER BY created_at ASC
+    `, [req.params.visit_id]);
+
+    const allBills = billRes.rows || [];
+    const injectionBills = allBills.filter(b => b.item_type === 'injection' || (b.item_name || '').toLowerCase().includes('injection'));
+    const totalBilled = injectionBills.reduce((acc, b) => acc + parseFloat(b.total_price || (b.unit_price * b.quantity) || 0), 0);
+    const totalPaid = injectionBills.filter(b => ['paid', 'insurance', 'sha', 'waived'].includes((b.status || '').toLowerCase())).reduce((acc, b) => acc + parseFloat(b.total_price || b.paid_amount || 0), 0);
+    const totalPending = Math.max(0, totalBilled - totalPaid);
+
+    return successResponse(res, 200, 'Injection billing summary', {
+      total_billed: totalBilled,
+      total_paid: totalPaid,
+      total_pending: totalPending,
+      items: injectionBills,
+      all_bills: allBills
+    });
+  } catch (error) {
+    return errorResponse(res, 500, 'Failed to fetch billing summary: ' + error.message);
+  }
+});
+
+// Explicitly bill an injection procedure / fee (e.g. IM fee, IV Cannulation, Dressing)
+router.post('/visit/:visit_id/bill-service', async (req, res) => {
+  try {
+    const { item_name, service_code, unit_price, quantity, description } = req.body;
+    if (!item_name) return errorResponse(res, 400, 'Item name required');
+
+    const visit = await pool.query('SELECT patient_id FROM visits WHERE id::text=$1::text', [req.params.visit_id]);
+    if (!visit.rows[0]) return errorResponse(res, 404, 'Visit not found');
+
+    const price = parseFloat(unit_price) || 0;
+    const qty = parseInt(quantity) || 1;
+    const tot = price * qty;
+
+    const result = await pool.query(`
+      INSERT INTO billing_items (
+        facility_id, pharmacy_id, visit_id, patient_id,
+        item_name, description, service_code, item_type, unit_price, quantity, total_price, status
+      ) VALUES ($1,$1,$2,$3,$4,$5,$6,'injection',$7,$8,$9,'pending')
+      RETURNING *
+    `, [req.pharmacy_id, req.params.visit_id, visit.rows[0].patient_id, item_name, description || item_name, service_code || null, price, qty, tot]);
+
+    return successResponse(res, 201, 'Injection service billed successfully', result.rows[0]);
+  } catch (error) {
+    console.error('Bill injection service error:', error.message);
+    return errorResponse(res, 500, 'Failed to bill injection service: ' + error.message);
+  }
+});
+
+// Add drug order to injection room with automatic transparent billing
 router.post('/visit/:visit_id/orders', async (req, res) => {
   try {
     const { drug_name, dosage, route, frequency, duration, quantity, instructions, product_id, consultation_id } = req.body;
@@ -198,6 +393,36 @@ router.post('/visit/:visit_id/orders', async (req, res) => {
       return successResponse(res, 200, 'Order already exists for this visit', dup.rows[0]);
     }
 
+    let resolvedProductId = product_id || null;
+    let unitPrice = 0;
+    const qty = parseInt(quantity) || 1;
+
+    // 1. Try to resolve price from products
+    if (resolvedProductId) {
+      const pRes = await pool.query('SELECT selling_price FROM products WHERE id = $1', [resolvedProductId]);
+      if (pRes.rows[0]) unitPrice = parseFloat(pRes.rows[0].selling_price || 0);
+    } else {
+      const matchProd = await pool.query(
+        `SELECT id, selling_price FROM products WHERE (pharmacy_id = $1 OR pharmacy_id IS NULL) AND (LOWER(name) = LOWER($2) OR LOWER(name) LIKE LOWER($3)) LIMIT 1`,
+        [req.pharmacy_id, drug_name.trim(), '%' + drug_name.trim() + '%']
+      );
+      if (matchProd.rows[0]) {
+        resolvedProductId = matchProd.rows[0].id;
+        unitPrice = parseFloat(matchProd.rows[0].selling_price || 0);
+      }
+    }
+
+    // 2. If not in products, check service_prices
+    if (unitPrice === 0) {
+      const spRes = await pool.query(
+        `SELECT price FROM service_prices WHERE (pharmacy_id = $1 OR pharmacy_id IS NULL) AND is_active = true AND (LOWER(name) = LOWER($2) OR LOWER(name) LIKE LOWER($3)) LIMIT 1`,
+        [req.pharmacy_id, drug_name.trim(), '%' + drug_name.trim() + '%']
+      );
+      if (spRes.rows[0]) {
+        unitPrice = parseFloat(spRes.rows[0].price || 0);
+      }
+    }
+
     const result = await pool.query(`
       INSERT INTO injection_room_orders (
         pharmacy_id, visit_id, patient_id, consultation_id, prescribed_by,
@@ -206,9 +431,80 @@ router.post('/visit/:visit_id/orders', async (req, res) => {
     `, [req.pharmacy_id, req.params.visit_id, visit.rows[0].patient_id,
       consultation_id||null, req.user.id, drug_name, dosage||null,
       route||'IV', frequency||null, duration||null, quantity||null,
-      instructions||null, product_id||null]);
+      instructions||null, resolvedProductId]);
 
-    return successResponse(res, 201, 'Order added', result.rows[0]);
+    const createdOrder = result.rows[0];
+
+    // 3. Clear transparent billing: Create billing_item for the injection medication
+    const itemName = `Injection: ${drug_name}${dosage ? ' ' + dosage : ''}`.trim();
+    const existingBill = await pool.query(`
+      SELECT id FROM billing_items
+      WHERE visit_id::text = $1::text AND status != 'cancelled'
+        AND (LOWER(item_name) = LOWER($2) OR LOWER(item_name) LIKE LOWER($3))
+      LIMIT 1
+    `, [req.params.visit_id, itemName, '%' + drug_name.trim() + '%']);
+
+    let billingItemId = null;
+    if (!existingBill.rows[0]) {
+      const billRes = await pool.query(`
+        INSERT INTO billing_items (
+          facility_id, pharmacy_id, visit_id, patient_id,
+          item_name, description, item_type, unit_price, quantity, total_price, status
+        ) VALUES ($1,$1,$2,$3,$4,$5,'injection',$6,$7,$8,'pending')
+        RETURNING id
+      `, [req.pharmacy_id, req.params.visit_id, visit.rows[0].patient_id, itemName, `Injection Service: ${drug_name} (${route || 'IV'})`, unitPrice, qty, unitPrice * qty]);
+      billingItemId = billRes.rows[0]?.id;
+    } else {
+      billingItemId = existingBill.rows[0].id;
+    }
+
+    // 4. Auto-bill injection administration procedure fee if configured and not yet billed
+    const adminCheck = await pool.query(`
+      SELECT id FROM billing_items
+      WHERE visit_id::text = $1::text AND status != 'cancelled'
+        AND (
+          LOWER(item_name) LIKE '%injection admin%'
+          OR LOWER(item_name) LIKE '%injection fee%'
+          OR service_code IN ('PROC-IM', 'PROC-SC', 'PROC-IV-AB', 'PROC-IVC', 'INJ-ADMIN')
+        )
+      LIMIT 1
+    `, [req.params.visit_id]);
+
+    if (!adminCheck.rows[0]) {
+      const spAdmin = await pool.query(`
+        SELECT service_code, name, price FROM service_prices
+        WHERE (pharmacy_id = $1 OR pharmacy_id IS NULL) AND is_active = true
+          AND (
+            LOWER(category) = 'injection'
+            OR service_code IN ('PROC-IM', 'PROC-SC', 'PROC-IV-AB', 'INJ-ADMIN')
+            OR LOWER(name) LIKE '%injection administration%'
+            OR LOWER(name) LIKE '%im injection%'
+            OR LOWER(name) LIKE '%iv injection%'
+          )
+        ORDER BY (service_code = 'PROC-IM') DESC, (category = 'injection') DESC
+        LIMIT 1
+      `, [req.pharmacy_id]);
+
+      if (spAdmin.rows[0] && parseFloat(spAdmin.rows[0].price || 0) > 0) {
+        const adminFee = parseFloat(spAdmin.rows[0].price);
+        const feeName = spAdmin.rows[0].name || 'Injection Administration Fee';
+        await pool.query(`
+          INSERT INTO billing_items (
+            facility_id, pharmacy_id, visit_id, patient_id,
+            item_name, description, item_type, service_code, unit_price, quantity, total_price, status
+          ) VALUES ($1,$1,$2,$3,$4,$5,'injection',$6,$7,1,$7,'pending')
+        `, [req.pharmacy_id, req.params.visit_id, visit.rows[0].patient_id, feeName, 'Injection Room Administration Procedure Fee', spAdmin.rows[0].service_code || 'INJ-ADMIN', adminFee]);
+      }
+    }
+
+    return successResponse(res, 201, 'Order added with clear billing', {
+      ...createdOrder,
+      billing_item_id: billingItemId,
+      unit_price: unitPrice,
+      total_price: unitPrice * qty,
+      is_paid: false,
+      payment_status: 'pending'
+    });
   } catch (error) {
     console.error('Add order error:', error.message);
     return errorResponse(res, 500, 'Failed to add order: ' + error.message);
@@ -401,16 +697,18 @@ router.put('/orders/:order_id/administer', async (req, res) => {
 
       if (alreadyBilled.rows[0]) {
         const existingItem = alreadyBilled.rows[0];
-        if (parseFloat(existingItem.unit_price || 0) === 0 && unitPrice > 0) {
-          await client.query(`
-            UPDATE billing_items SET unit_price = $1, total_price = $1 * quantity, updated_at = NOW()
-            WHERE id = $2
-          `, [unitPrice, existingItem.id]);
-        }
+        await client.query(`
+          UPDATE billing_items
+          SET item_type = 'injection',
+              unit_price = CASE WHEN COALESCE(unit_price, 0) = 0 THEN $1 ELSE unit_price END,
+              total_price = CASE WHEN COALESCE(total_price, 0) = 0 THEN $1 * quantity ELSE total_price END,
+              updated_at = NOW()
+          WHERE id = $2
+        `, [unitPrice, existingItem.id]);
       } else {
         await client.query(`
-          INSERT INTO billing_items (facility_id, pharmacy_id, visit_id, patient_id, item_name, description, item_type, unit_price, quantity, status)
-          VALUES ($1,$1,$2,$3,$4,$4,'prescription',$5,$6,'pending')
+          INSERT INTO billing_items (facility_id, pharmacy_id, visit_id, patient_id, item_name, description, item_type, unit_price, quantity, total_price, status)
+          VALUES ($1,$1,$2,$3,$4,$4,'injection',$5,$6,$5 * $6,'pending')
         `, [pharmacyId, o.visit_id, o.patient_id, itemName, unitPrice, qty]);
       }
       await client.query('RELEASE SAVEPOINT bill_sp');

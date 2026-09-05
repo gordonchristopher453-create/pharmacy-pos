@@ -191,6 +191,7 @@ async function runMigrationsAndSeed(p) {
         email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'super_admin',
+        is_active BOOLEAN DEFAULT TRUE,
         reset_otp VARCHAR(20),
         reset_otp_expires TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -379,6 +380,8 @@ async function runMigrationsAndSeed(p) {
         pharmacy_id INT,
         permissions JSONB DEFAULT '[]',
         last_login TIMESTAMPTZ,
+        dha_license_number VARCHAR(100),
+        professional_title VARCHAR(100),
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -408,6 +411,9 @@ async function runMigrationsAndSeed(p) {
         email VARCHAR(255),
         address TEXT,
         county VARCHAR(100),
+        emergency_contact_name VARCHAR(255),
+        emergency_contact_phone VARCHAR(50),
+        emergency_contact_relation VARCHAR(100),
         next_of_kin_name VARCHAR(255),
         next_of_kin_phone VARCHAR(50),
         next_of_kin_relation VARCHAR(100),
@@ -466,7 +472,181 @@ async function runMigrationsAndSeed(p) {
         name VARCHAR(255) NOT NULL,
         category VARCHAR(100) NOT NULL,
         price DECIMAL(10,2) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure visits table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        patient_id INT NOT NULL,
+        visit_number VARCHAR(50),
+        visit_type VARCHAR(50) DEFAULT 'general',
+        department VARCHAR(50) DEFAULT 'general',
+        status VARCHAR(50) DEFAULT 'waiting',
+        priority VARCHAR(20) DEFAULT 'normal',
+        chief_complaint TEXT,
+        attending_doctor INT,
+        assigned_to INT,
+        notes TEXT,
+        consultation_fee DECIMAL(10,2) DEFAULT 0,
+        fee_paid BOOLEAN DEFAULT FALSE,
+        payment_method VARCHAR(50),
+        insurance_provider VARCHAR(150),
+        member_number VARCHAR(150),
+        auth_code VARCHAR(150),
+        copay_amount NUMERIC(10,2) DEFAULT 0,
+        created_by INT,
+        discharged_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure vitals table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS vitals (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        visit_id INT,
+        patient_id INT,
+        blood_pressure_systolic INT,
+        blood_pressure_diastolic INT,
+        pulse_rate INT,
+        temperature DECIMAL(4,1),
+        respiratory_rate INT,
+        oxygen_saturation INT,
+        weight DECIMAL(5,2),
+        height DECIMAL(5,2),
+        bmi DECIMAL(4,1),
+        recorded_by INT,
+        notes TEXT,
+        recorded_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure consultations table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS consultations (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        visit_id INT,
+        patient_id INT,
+        doctor_id INT,
+        presenting_complaint TEXT,
+        history_of_illness TEXT,
+        examination_findings TEXT,
+        diagnosis TEXT,
+        icd_code VARCHAR(20),
+        management_plan TEXT,
+        follow_up_date DATE,
+        follow_up_notes TEXT,
+        admit_patient BOOLEAN DEFAULT false,
+        referral TEXT,
+        encounter_id INT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure prescriptions table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS prescriptions (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        consultation_id INT,
+        visit_id INT,
+        patient_id INT,
+        doctor_id INT,
+        drug_name VARCHAR(255) NOT NULL,
+        dosage VARCHAR(100),
+        frequency VARCHAR(100),
+        duration VARCHAR(100),
+        route VARCHAR(50) DEFAULT 'oral',
+        instructions TEXT,
+        quantity INTEGER DEFAULT 1,
+        unit_price NUMERIC(10,2) DEFAULT 0,
+        status VARCHAR(30) DEFAULT 'pending',
+        dispensed_at TIMESTAMPTZ,
+        dispensed_by INT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure lab_requests table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS lab_requests (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        consultation_id INT,
+        visit_id INT,
+        patient_id INT,
+        doctor_id INT,
+        test_name VARCHAR(255) NOT NULL,
+        test_code VARCHAR(50),
+        urgency VARCHAR(20) DEFAULT 'routine',
+        notes TEXT,
+        status VARCHAR(30) DEFAULT 'pending',
+        result TEXT,
+        result_file_url TEXT,
+        resulted_at TIMESTAMPTZ,
+        resulted_by INT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure procedures table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS procedures (
+        id SERIAL PRIMARY KEY,
+        pharmacy_id INT,
+        consultation_id INT,
+        visit_id INT,
+        patient_id INT,
+        doctor_id INT,
+        procedure_name VARCHAR(255) NOT NULL,
+        procedure_code VARCHAR(50),
+        notes TEXT,
+        outcome TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Ensure billing_items table exists
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS billing_items (
+        id SERIAL PRIMARY KEY,
+        facility_id INT,
+        pharmacy_id INT,
+        visit_id INT,
+        patient_id INT,
+        encounter_id INT,
+        service_order_id INT,
+        item_type VARCHAR(50) NOT NULL DEFAULT 'other',
+        item_name VARCHAR(255),
+        description VARCHAR(255),
+        service_code VARCHAR(100),
+        quantity INTEGER DEFAULT 1,
+        unit_price NUMERIC(10,2) DEFAULT 0,
+        total_price NUMERIC(10,2) DEFAULT 0,
+        paid_amount NUMERIC(10,2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'pending',
+        payment_method VARCHAR(50),
+        reference_number VARCHAR(150),
+        insurance_provider VARCHAR(150),
+        member_number VARCHAR(150),
+        auth_code VARCHAR(150),
+        copay_amount NUMERIC(10,2) DEFAULT 0,
+        collected_by INT,
+        paid_at TIMESTAMPTZ,
+        waived_by INT,
+        waive_reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
 
@@ -487,12 +667,21 @@ async function runMigrationsAndSeed(p) {
       logger.info(`Running migration: ${sqlFile}`);
       const sqlContent = fs.readFileSync(filePath, 'utf8');
       
-      // Execute the migration content. Splitting by semicolons can sometimes fail if there are functions/triggers, 
-      // but for standard SQL schemas, running it in chunks or directly works. We will try executing it directly first.
       try {
         await p.query(sqlContent);
       } catch (sqlErr) {
-        logger.warn(`Skipped some migration commands in ${sqlFile}: ${sqlErr.message}`);
+        // Fallback: split by semicolon and execute statement by statement
+        const stmts = sqlContent
+          .split(/;\s*$/m)
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && !s.startsWith('--'));
+        for (const s of stmts) {
+          try {
+            await p.query(s);
+          } catch (stmtErr) {
+            // ignore unsupported PL/pgSQL function or trigger errors in in-memory test databases
+          }
+        }
       }
     }
 
@@ -558,6 +747,37 @@ async function runMigrationsAndSeed(p) {
       `);
     } catch (e) {
       logger.error('Failed to create nursing_notes table:', e.message);
+    }
+
+    // Ensure injection_room_orders table exists early
+    try {
+      await p.query(`
+        CREATE TABLE IF NOT EXISTS injection_room_orders (
+          id SERIAL PRIMARY KEY,
+          pharmacy_id INT,
+          visit_id INT,
+          patient_id INT,
+          consultation_id INT,
+          prescribed_by INT,
+          administered_by INT,
+          drug_name VARCHAR(255) NOT NULL,
+          dosage VARCHAR(100),
+          route VARCHAR(50),
+          frequency VARCHAR(50),
+          duration VARCHAR(50),
+          quantity INT DEFAULT 1,
+          instructions TEXT,
+          notes TEXT,
+          nurse_report TEXT,
+          status VARCHAR(50) DEFAULT 'pending',
+          product_id VARCHAR(100),
+          administered_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+    } catch (e) {
+      logger.error('Failed to create injection_room_orders early:', e.message);
     }
 
     // Ensure doctor_round_notes table exists

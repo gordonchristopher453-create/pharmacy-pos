@@ -345,11 +345,12 @@ const payVisitBill = async (req, res) => {
     let itemsToPay = [];
     if (item_ids && Array.isArray(item_ids) && item_ids.length > 0) {
       const stringItemIds = item_ids.map(id => String(id));
+      const placeholders = stringItemIds.map((_, idx) => `$${idx + 2}`).join(', ');
       const resItems = await client.query(`
         SELECT * FROM billing_items
-        WHERE visit_id::text=$1::text AND id::text = ANY($2::text[]) AND status IN ('pending', 'partial')
+        WHERE visit_id::text=$1::text AND id::text IN (${placeholders}) AND status IN ('pending', 'partial')
         ORDER BY created_at ASC
-      `, [vid, stringItemIds]);
+      `, [vid, ...stringItemIds]);
       itemsToPay = resItems.rows;
     } else {
       const resItems = await client.query(`
@@ -450,7 +451,7 @@ const payVisitBill = async (req, res) => {
       logger.warn('Audit log write warning in payVisitBill: ' + auditErr.message);
     }
 
-    const io = req.app.get('io');
+    const io = req.app?.get ? req.app.get('io') : null;
     if (io) io.emit(`billing_paid_${req.pharmacy_id}`, { visit_id: vid, items: updatedRows });
 
     return successResponse(res, 200, `Payment recorded for ${updatedRows.length} items`, updatedRows);
