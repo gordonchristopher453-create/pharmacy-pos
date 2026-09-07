@@ -32,8 +32,8 @@ export default function FinancialSummaryReport({
   const isReceptionistOnly = !isAdminOrHR && (userRole === 'receptionist' || userRole === 'cashier');
 
   // Date states
-  const [dateFrom, setDateFrom] = useState(isAdminOrHR ? (initialDateFrom || todayStr) : todayStr);
-  const [dateTo, setDateTo] = useState(isAdminOrHR ? (initialDateTo || todayStr) : todayStr);
+  const [dateFrom, setDateFrom] = useState(initialDateFrom || todayStr);
+  const [dateTo, setDateTo] = useState(initialDateTo || todayStr);
   const [activePreset, setActivePreset] = useState(dateFrom === todayStr && dateTo === todayStr ? 'today' : 'custom');
 
   // Report sub-tab
@@ -61,19 +61,17 @@ export default function FinancialSummaryReport({
   const fetchReport = async (dFrom = dateFrom, dTo = dateTo) => {
     setLoading(true);
     try {
-      const params = {};
-      if (isAdminOrHR) {
-        params.date_from = dFrom;
-        params.date_to = dTo;
-      } else {
-        // Receptionist strictly locked to today / single date
-        params.date = todayStr;
-      }
+      const params = {
+        date_from: dFrom,
+        date_to: dTo,
+        date: dFrom
+      };
 
       const res = await api.get('/billing/daily-summary', { params });
       const data = res.data.data || {};
       setReportData(data);
     } catch (err) {
+      console.error('Financial summary load error:', err);
       toast.error('Failed to load financial summary report');
     } finally {
       setLoading(false);
@@ -319,131 +317,101 @@ export default function FinancialSummaryReport({
           flexWrap: 'wrap',
           gap: 12
         }}>
-          {isAdminOrHR ? (
-            /* Admin & HR: Full Date Range Calendar Controls + Presets */
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', width: '100%' }}>
-              {/* Presets */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {[
-                  { id: 'today', label: 'Today' },
-                  { id: 'yesterday', label: 'Yesterday' },
-                  { id: '7days', label: 'Last 7 Days' },
-                  { id: 'thisMonth', label: 'This Month' },
-                  { id: 'lastMonth', label: 'Last Month' },
-                ].map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => applyPreset(p.id)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: '1px solid var(--border)',
-                      cursor: 'pointer',
-                      background: activePreset === p.id ? 'var(--accent)' : 'var(--bg-elevated)',
-                      color: activePreset === p.id ? '#0F1612' : 'var(--text-muted)',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Calendar From & To Inputs */}
-              <form onSubmit={handleCustomDateApply} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
-                  <Calendar size={14} style={{ color: 'var(--accent)' }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={e => {
-                      const v = e.target.value;
-                      setDateFrom(v);
-                      setActivePreset('custom');
-                      if (dateTo < v) setDateTo(v);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-primary)',
-                      fontSize: 12,
-                      outline: 'none',
-                      fontFamily: 'DM Sans, sans-serif',
-                      cursor: 'pointer'
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
-                  <Calendar size={14} style={{ color: 'var(--accent)' }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={e => {
-                      setDateTo(e.target.value);
-                      setActivePreset('custom');
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-primary)',
-                      fontSize: 12,
-                      outline: 'none',
-                      fontFamily: 'DM Sans, sans-serif',
-                      cursor: 'pointer'
-                    }}
-                  />
-                </div>
-
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', width: '100%' }}>
+            {/* Presets */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: '7days', label: 'Last 7 Days' },
+                { id: 'thisMonth', label: 'This Month' },
+                { id: 'lastMonth', label: 'Last Month' },
+              ].map(p => (
                 <button
-                  type="submit"
+                  key={p.id}
+                  onClick={() => applyPreset(p.id)}
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: 8,
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--accent)',
-                    color: 'var(--accent)',
+                    padding: '5px 12px',
+                    borderRadius: 6,
                     fontSize: 12,
-                    fontWeight: 700,
-                    cursor: 'pointer'
+                    fontWeight: 600,
+                    border: '1px solid var(--border)',
+                    cursor: 'pointer',
+                    background: activePreset === p.id ? 'var(--accent)' : 'var(--bg-elevated)',
+                    color: activePreset === p.id ? '#0F1612' : 'var(--text-muted)',
+                    transition: 'all 0.15s ease'
                   }}
                 >
-                  Apply Dates
+                  {p.label}
                 </button>
-              </form>
+              ))}
             </div>
-          ) : (
-            /* Receptionist: Daily Lock Notice & Shift Indicator */
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 16 }}>🔒</span>
-                <div>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    Daily Shift Reconciliation — {new Date(todayStr).toLocaleDateString('en-KE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
-                  </span>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Receptionist role is configured for active daily shift balances. Multi-date financial auditing is restricted to Admin and HR.
-                  </div>
-                </div>
+
+            {/* Calendar From & To Inputs */}
+            <form onSubmit={handleCustomDateApply} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
+                <Calendar size={14} style={{ color: 'var(--accent)' }} />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setDateFrom(v);
+                    setActivePreset('custom');
+                    if (dateTo < v) setDateTo(v);
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    outline: 'none',
+                    fontFamily: 'DM Sans, sans-serif',
+                    cursor: 'pointer'
+                  }}
+                />
               </div>
 
-              <div style={{
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '4px 12px',
-                fontSize: 12,
-                fontWeight: 700,
-                color: 'var(--accent)'
-              }}>
-                📅 Register Date: {todayStr}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px' }}>
+                <Calendar size={14} style={{ color: 'var(--accent)' }} />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => {
+                    setDateTo(e.target.value);
+                    setActivePreset('custom');
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    outline: 'none',
+                    fontFamily: 'DM Sans, sans-serif',
+                    cursor: 'pointer'
+                  }}
+                />
               </div>
-            </div>
-          )}
+
+              <button
+                type="submit"
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 8,
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--accent)',
+                  color: 'var(--accent)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Apply Dates
+              </button>
+            </form>
+          </div>
         </div>
       </div>
 

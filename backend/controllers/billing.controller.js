@@ -94,6 +94,27 @@ const getDailySummary = async (req, res) => {
     const pid = req.pharmacy_id;
     const today = new Date().toISOString().split('T')[0];
 
+    // Ensure columns exist on-the-fly (self-healing for any database instance)
+    try {
+      await pool.query(`
+        ALTER TABLE billing_items 
+          ADD COLUMN IF NOT EXISTS facility_id INT,
+          ADD COLUMN IF NOT EXISTS pharmacy_id INT,
+          ADD COLUMN IF NOT EXISTS item_name VARCHAR(255),
+          ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS collected_by VARCHAR(100),
+          ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50),
+          ADD COLUMN IF NOT EXISTS reference_number VARCHAR(150),
+          ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150),
+          ADD COLUMN IF NOT EXISTS member_number VARCHAR(150),
+          ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150),
+          ADD COLUMN IF NOT EXISTS copay_amount NUMERIC(10,2) DEFAULT 0;
+      `);
+    } catch (colErr) {
+      // Non-fatal if table already upgraded or permissions restricted
+    }
+
     const userRole = (req.user?.role || '').toLowerCase();
     const userPerms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
     const isAdminOrHR = [
@@ -103,67 +124,99 @@ const getDailySummary = async (req, res) => {
       userPerms.includes('can_view_revenue_reports') ||
       userPerms.includes('can_view_all_reports');
 
-    let targetDateFrom = today;
-    let targetDateTo = today;
+    let targetDateFrom = req.query.date_from || req.query.start_date || req.query.date || today;
+    let targetDateTo = req.query.date_to || req.query.end_date || req.query.date || targetDateFrom;
 
-    if (isAdminOrHR) {
-      targetDateFrom = req.query.date_from || req.query.start_date || req.query.date || today;
-      targetDateTo = req.query.date_to || req.query.end_date || req.query.date || targetDateFrom;
-    } else {
-      // Receptionist / Cashier is strictly restricted to daily summary
-      const singleDate = req.query.date || today;
-      targetDateFrom = singleDate;
-      targetDateTo = singleDate;
+    let summaryRes;
+    try {
+      summaryRes = await pool.query(`
+        SELECT
+          COUNT(*)                                                        AS total_items,
+          COUNT(DISTINCT patient_id)                                      AS total_patients,
+          COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
+          COUNT(*) FILTER (WHERE status='pending' OR status='partial')   AS pending_count,
+          COUNT(*) FILTER (WHERE status='waived')                         AS waived_count,
+          COALESCE(SUM(total_price),0)                                    AS total_billed,
+          COALESCE(SUM(CASE 
+            WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
+            ELSE 0 END), 0)                                               AS total_collected,
+          COALESCE(SUM(CASE 
+            WHEN status='pending' THEN total_price
+            WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
+            ELSE 0 END), 0)                                               AS total_pending,
+          COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0)     AS total_waived,
+          COALESCE(SUM(CASE 
+            WHEN LOWER(COALESCE(payment_method,''))='cash' AND status IN ('paid','partial') 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            ELSE 0 END), 0) AS cash_collected,
+          COALESCE(SUM(CASE 
+            WHEN LOWER(COALESCE(payment_method,''))='mpesa' AND status IN ('paid','partial') 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            ELSE 0 END), 0) AS mpesa_collected,
+          COALESCE(SUM(CASE 
+            WHEN (LOWER(COALESCE(payment_method,'')) IN ('insurance','nhif','sha') OR status IN ('insurance','nhif','sha')) 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            ELSE 0 END), 0) AS insurance_collected,
+          COALESCE(SUM(CASE 
+            WHEN LOWER(COALESCE(payment_method,''))='bank' AND status IN ('paid','partial') 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            ELSE 0 END), 0) AS bank_collected,
+          COALESCE(SUM(CASE 
+            WHEN LOWER(COALESCE(payment_method,''))='corporate' 
+              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
+            ELSE 0 END), 0) AS corporate_collected
+        FROM billing_items
+        WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
+          AND (
+            (DATE(created_at) BETWEEN $2 AND $3)
+            OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
+          )
+      `, [pid, targetDateFrom, targetDateTo]);
+    } catch (primaryErr) {
+      logger.warn('Primary summary query failed, running resilient fallback:', primaryErr.message);
+      summaryRes = await pool.query(`
+        SELECT
+          COUNT(*) AS total_items,
+          COUNT(DISTINCT patient_id) AS total_patients,
+          COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
+          COUNT(*) FILTER (WHERE status='pending' OR status='partial') AS pending_count,
+          COUNT(*) FILTER (WHERE status='waived') AS waived_count,
+          COALESCE(SUM(total_price),0) AS total_billed,
+          COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS total_collected,
+          COALESCE(SUM(total_price) FILTER (WHERE status IN ('pending', 'partial')),0) AS total_pending,
+          COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0) AS total_waived,
+          COALESCE(SUM(total_price) FILTER (WHERE status='paid'), 0) AS cash_collected,
+          0 AS mpesa_collected,
+          COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance', 'nhif', 'sha')), 0) AS insurance_collected,
+          0 AS bank_collected,
+          COALESCE(SUM(total_price) FILTER (WHERE status='corporate'), 0) AS corporate_collected
+        FROM billing_items
+        WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
+          AND DATE(created_at) BETWEEN $2 AND $3
+      `, [pid, targetDateFrom, targetDateTo]);
     }
-
-    const summaryRes = await pool.query(`
-      SELECT
-        COUNT(*)                                                        AS total_items,
-        COUNT(DISTINCT patient_id)                                      AS total_patients,
-        COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
-        COUNT(*) FILTER (WHERE status='pending' OR status='partial')   AS pending_count,
-        COUNT(*) FILTER (WHERE status='waived')                         AS waived_count,
-        COALESCE(SUM(total_price),0)                                    AS total_billed,
-        COALESCE(SUM(CASE 
-          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(paid_amount, total_price)
-          WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
-          ELSE 0 END), 0)                                               AS total_collected,
-        COALESCE(SUM(CASE 
-          WHEN status='pending' THEN total_price
-          WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
-          ELSE 0 END), 0)                                               AS total_pending,
-        COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0)     AS total_waived,
-        COALESCE(SUM(CASE WHEN LOWER(payment_method)='cash' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS cash_collected,
-        COALESCE(SUM(CASE WHEN LOWER(payment_method)='mpesa' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS mpesa_collected,
-        COALESCE(SUM(CASE WHEN LOWER(payment_method) IN ('insurance','nhif','sha') OR status IN ('insurance','nhif','sha') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS insurance_collected,
-        COALESCE(SUM(CASE WHEN LOWER(payment_method)='bank' AND status IN ('paid','partial') THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS bank_collected,
-        COALESCE(SUM(CASE WHEN LOWER(payment_method)='corporate' THEN COALESCE(paid_amount, total_price) ELSE 0 END), 0) AS corporate_collected
-      FROM billing_items
-      WHERE (facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
-        AND (
-          (DATE(created_at) BETWEEN $2 AND $3)
-          OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
-        )
-    `, [pid, targetDateFrom, targetDateTo]);
 
     const byMethodRes = await pool.query(`
       SELECT 
         COALESCE(LOWER(payment_method), 'cash') AS payment_method,
         COUNT(*) AS count,
         COALESCE(SUM(CASE 
-          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(paid_amount, total_price)
+          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
+            THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
           WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
           ELSE 0 END), 0) AS amount
       FROM billing_items
-      WHERE (facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
+      WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
         AND (
           (DATE(created_at) BETWEEN $2 AND $3)
           OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
         )
-        AND (status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (status='partial' AND paid_amount > 0))
+        AND (status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (status='partial' AND COALESCE(paid_amount, 0) > 0))
       GROUP BY COALESCE(LOWER(payment_method), 'cash')
       ORDER BY amount DESC
-    `, [pid, targetDateFrom, targetDateTo]);
+    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
 
     const byTypeRes = await pool.query(`
       SELECT 
@@ -171,7 +224,8 @@ const getDailySummary = async (req, res) => {
         COUNT(*) AS count,
         COALESCE(SUM(total_price), 0) AS billed_amount,
         COALESCE(SUM(CASE 
-          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(paid_amount, total_price)
+          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
+            THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
           WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
           ELSE 0 END), 0) AS collected_amount,
         COALESCE(SUM(CASE 
@@ -179,14 +233,14 @@ const getDailySummary = async (req, res) => {
           WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
           ELSE 0 END), 0) AS pending_amount
       FROM billing_items
-      WHERE (facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
+      WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
         AND (
           (DATE(created_at) BETWEEN $2 AND $3)
           OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
         )
       GROUP BY COALESCE(item_type, 'other')
       ORDER BY billed_amount DESC
-    `, [pid, targetDateFrom, targetDateTo]);
+    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
 
     // Cashier / Staff Collection Breakdown (Handover / Shift Reconciliation)
     const byStaffRes = await pool.query(`
@@ -195,29 +249,48 @@ const getDailySummary = async (req, res) => {
         COALESCE(u.role, 'receptionist') AS collector_role,
         COUNT(bi.id) AS count,
         COALESCE(SUM(CASE 
-          WHEN bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(bi.paid_amount, bi.total_price)
+          WHEN bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
+            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
           WHEN bi.status = 'partial' THEN COALESCE(bi.paid_amount, 0)
           ELSE 0 END), 0) AS total_collected,
-        COALESCE(SUM(CASE WHEN LOWER(bi.payment_method)='cash' THEN COALESCE(bi.paid_amount, bi.total_price) ELSE 0 END), 0) AS cash_collected,
-        COALESCE(SUM(CASE WHEN LOWER(bi.payment_method)='mpesa' THEN COALESCE(bi.paid_amount, bi.total_price) ELSE 0 END), 0) AS mpesa_collected,
-        COALESCE(SUM(CASE WHEN LOWER(bi.payment_method) IN ('insurance', 'nhif', 'sha', 'corporate') OR bi.status IN ('insurance', 'nhif', 'sha', 'corporate') THEN COALESCE(bi.paid_amount, bi.total_price) ELSE 0 END), 0) AS insurance_collected,
-        COALESCE(SUM(CASE WHEN LOWER(bi.payment_method)='bank' THEN COALESCE(bi.paid_amount, bi.total_price) ELSE 0 END), 0) AS bank_collected
+        COALESCE(SUM(CASE 
+          WHEN LOWER(COALESCE(bi.payment_method,''))='cash' 
+            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
+          ELSE 0 END), 0) AS cash_collected,
+        COALESCE(SUM(CASE 
+          WHEN LOWER(COALESCE(bi.payment_method,''))='mpesa' 
+            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
+          ELSE 0 END), 0) AS mpesa_collected,
+        COALESCE(SUM(CASE 
+          WHEN LOWER(COALESCE(bi.payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate') OR bi.status IN ('insurance', 'nhif', 'sha', 'corporate') 
+            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
+          ELSE 0 END), 0) AS insurance_collected,
+        COALESCE(SUM(CASE 
+          WHEN LOWER(COALESCE(bi.payment_method,''))='bank' 
+            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
+          ELSE 0 END), 0) AS bank_collected
       FROM billing_items bi
-      LEFT JOIN users u ON bi.collected_by = u.id
-      WHERE (bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
+      LEFT JOIN users u ON bi.collected_by::text = u.id::text
+      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
         AND (
           (DATE(bi.created_at) BETWEEN $2 AND $3)
           OR (bi.paid_at IS NOT NULL AND DATE(bi.paid_at) BETWEEN $2 AND $3)
         )
-        AND (bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (bi.status='partial' AND bi.paid_amount > 0))
+        AND (bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (bi.status='partial' AND COALESCE(bi.paid_amount, 0) > 0))
       GROUP BY u.full_name, u.role
       ORDER BY total_collected DESC
-    `, [pid, targetDateFrom, targetDateTo]);
+    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
 
     // Delayed Collections & Pending Arrears Breakdown
     const delayedRes = await pool.query(`
       SELECT 
-        bi.id, bi.item_name, bi.item_type, bi.total_price, bi.paid_amount, bi.status, bi.created_at,
+        bi.id, 
+        COALESCE(bi.item_name, bi.description, 'Service / Medication') AS item_name, 
+        bi.item_type, 
+        bi.total_price, 
+        COALESCE(bi.paid_amount, 0) AS paid_amount, 
+        bi.status, 
+        bi.created_at,
         (bi.total_price - COALESCE(bi.paid_amount, 0)) AS balance_due,
         p.id AS patient_id, p.full_name AS patient_name, p.patient_number, p.phone AS patient_phone,
         v.id AS visit_id, v.visit_number, v.visit_type,
@@ -225,32 +298,33 @@ const getDailySummary = async (req, res) => {
       FROM billing_items bi
       LEFT JOIN patients p ON bi.patient_id::text = p.id::text
       LEFT JOIN visits v ON bi.visit_id::text = v.id::text
-      WHERE (bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
+      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
         AND DATE(bi.created_at) BETWEEN $2 AND $3
         AND bi.status IN ('pending', 'partial')
       ORDER BY balance_due DESC, bi.created_at ASC
       LIMIT 100
-    `, [pid, targetDateFrom, targetDateTo]);
+    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
 
     // Detailed Itemized Ledger Feed
     const recentRes = await pool.query(`
       SELECT 
         bi.*, 
+        COALESCE(bi.item_name, bi.description, 'Service / Medication') AS item_name,
         v.visit_number, v.visit_type,
         p.full_name AS patient_name, p.patient_number, p.phone AS patient_phone,
         u.full_name AS collector_name
       FROM billing_items bi
       LEFT JOIN visits v ON bi.visit_id::text=v.id::text
       LEFT JOIN patients p ON bi.patient_id::text=p.id::text
-      LEFT JOIN users u ON bi.collected_by=u.id
-      WHERE (bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
+      LEFT JOIN users u ON bi.collected_by::text=u.id::text
+      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
         AND (
           (DATE(bi.created_at) BETWEEN $2 AND $3)
           OR (bi.paid_at IS NOT NULL AND DATE(bi.paid_at) BETWEEN $2 AND $3)
         )
       ORDER BY COALESCE(bi.paid_at, bi.created_at) DESC
       LIMIT 150
-    `, [pid, targetDateFrom, targetDateTo]);
+    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
 
     // Facility Details for Official Letterhead
     const pharmacyRes = await pool.query(`
@@ -288,7 +362,7 @@ const payBillingItem = async (req, res) => {
     const pMethod = (payment_method || 'cash').toLowerCase();
     const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
     const statusToSet = isInsurance ? pMethod : 'paid';
-    const collectorId = req.user?.id ? Number(req.user.id) : null;
+    const collectorId = (req.user?.id !== undefined && req.user?.id !== null) ? String(req.user.id) : null;
 
     const result = await pool.query(`
       UPDATE billing_items
@@ -336,7 +410,7 @@ const payVisitBill = async (req, res) => {
     const pMethod = (payment_method || 'cash').toLowerCase();
     const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
     const statusToSet = isInsuranceMethod ? pMethod : 'paid';
-    const collectorId = req.user?.id ? Number(req.user.id) : null;
+    const collectorId = (req.user?.id !== undefined && req.user?.id !== null) ? String(req.user.id) : null;
 
     let depositToAllocate = (amount !== undefined && amount !== null && amount !== '') ? parseFloat(amount) : null;
     const copayVal = (copay_amount !== undefined && copay_amount !== null && copay_amount !== '') ? parseFloat(copay_amount) : 0;

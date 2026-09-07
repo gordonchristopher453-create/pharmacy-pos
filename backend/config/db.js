@@ -1319,7 +1319,7 @@ async function runMigrationsAndSeed(p) {
       { name: 'copay_amount', type: 'NUMERIC DEFAULT 0' },
       { name: 'paid_at', type: 'TIMESTAMPTZ' },
       { name: 'payment_method', type: 'VARCHAR(50)' },
-      { name: 'collected_by', type: 'INT' }
+      { name: 'collected_by', type: 'VARCHAR(100)' }
     ];
     for (const col of billingColumns) {
       try {
