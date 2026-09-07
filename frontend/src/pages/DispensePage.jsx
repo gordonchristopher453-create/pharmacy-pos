@@ -639,6 +639,7 @@ export default function DispensePage({ user: propUser }) {
                           setSelectedRx(prev => ({ ...prev, prescriptions: remaining }));
                         }
                         fetchRxQueue();
+                        fetchInpatientQueue();
                       } catch (err) { toast.error(err.response?.data?.message || 'Failed to dispense drug'); }
                     }} disabled={!rxPayment?.paid}
                       style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: rxPayment?.paid ? 'var(--accent)' : 'var(--bg-surface)', color: rxPayment?.paid ? '#0F1612' : 'var(--text-faint)', fontWeight: 800, cursor: rxPayment?.paid ? 'pointer' : 'not-allowed', fontSize: 13 }}>

@@ -32,10 +32,51 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
 
     // 1. Fetch prescription
     const prescQuery = await client.query(
-      "SELECT * FROM prescriptions WHERE id=$1 AND (pharmacy_id=$2 OR pharmacy_id IS NULL)",
-      [req.params.id, req.pharmacy_id]
+      "SELECT * FROM prescriptions WHERE id::text=$1::text AND ($2::text IS NULL OR pharmacy_id::text=$2::text OR pharmacy_id IS NULL)",
+      [String(req.params.id), req.pharmacy_id ? String(req.pharmacy_id) : null]
     );
-    const prescription = prescQuery.rows[0];
+    let prescription = prescQuery.rows[0];
+
+    // If not found in prescriptions, check if ID corresponds to an injection_room_order
+    let fromInjOrder = false;
+    if (!prescription) {
+      const injQuery = await client.query(
+        "SELECT * FROM injection_room_orders WHERE id::text=$1::text AND ($2::text IS NULL OR pharmacy_id::text=$2::text OR pharmacy_id IS NULL)",
+        [String(req.params.id), req.pharmacy_id ? String(req.pharmacy_id) : null]
+      );
+      const injOrder = injQuery.rows[0];
+      if (injOrder) {
+        fromInjOrder = true;
+        // Check if there is already a matching prescription
+        const pMatch = await client.query(
+          "SELECT * FROM prescriptions WHERE visit_id::text=$1::text AND LOWER(TRIM(drug_name))=LOWER(TRIM($2)) LIMIT 1",
+          [String(injOrder.visit_id), injOrder.drug_name]
+        );
+        if (pMatch.rows[0]) {
+          prescription = pMatch.rows[0];
+        } else {
+          // Create prescription record so stock deduction and audit work seamlessly
+          const insP = await client.query(`
+            INSERT INTO prescriptions (
+              pharmacy_id, visit_id, patient_id, drug_name, dosage, route, frequency, duration, quantity, product_id, status
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending') RETURNING *
+          `, [
+            injOrder.pharmacy_id || req.pharmacy_id,
+            injOrder.visit_id,
+            injOrder.patient_id,
+            injOrder.drug_name,
+            injOrder.dosage,
+            injOrder.route,
+            injOrder.frequency,
+            injOrder.duration,
+            injOrder.quantity || 1,
+            injOrder.product_id || null
+          ]);
+          prescription = insP.rows[0];
+        }
+      }
+    }
+
     if (!prescription) {
       await client.query('ROLLBACK');
       return errorResponse(res, 404, "Prescription not found");
@@ -49,12 +90,19 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
 
     // Check if visit is inpatient
     const visitRes = await client.query(
-      `SELECT status, visit_type FROM visits WHERE id::text = $1 LIMIT 1`,
+      `SELECT v.status, v.visit_type,
+              EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted') as has_admission,
+              EXISTS(SELECT 1 FROM beds b WHERE b.current_visit_id::text = v.id::text AND b.status = 'occupied') as has_bed
+       FROM visits v WHERE v.id::text = $1::text LIMIT 1`,
       [String(prescription.visit_id)]
     );
-    const isInpatientVisit = visitRes.rows[0] && (
-      visitRes.rows[0].status === 'inpatient' ||
-      (visitRes.rows[0].visit_type && visitRes.rows[0].visit_type.toLowerCase() === 'inpatient')
+    const vRow = visitRes.rows[0];
+    const isInpatientVisit = vRow && (
+      vRow.status === 'inpatient' ||
+      vRow.status === 'admitted' ||
+      (vRow.visit_type && vRow.visit_type.toLowerCase() === 'inpatient') ||
+      vRow.has_admission ||
+      vRow.has_bed
     );
 
     // 2. Payment gate check for outpatient visits only (Inpatients pay on running account)
@@ -117,20 +165,37 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
 
     // 4. Update prescription status
     const result = await client.query(
-      `UPDATE prescriptions SET status=$1, dispensed_at=NOW(), dispensed_by=$2 WHERE id=$3 AND (pharmacy_id=$4 OR pharmacy_id IS NULL) RETURNING *`,
-      [status || "dispensed", req.user.id, req.params.id, req.pharmacy_id]
+      `UPDATE prescriptions SET status=$1, dispensed_at=NOW(), dispensed_by=$2 
+       WHERE id::text=$3::text AND ($4::text IS NULL OR pharmacy_id::text=$4::text OR pharmacy_id IS NULL) 
+       RETURNING *`,
+      [status || "dispensed", req.user.id, String(prescription.id), req.pharmacy_id ? String(req.pharmacy_id) : null]
     );
+
+    // Also synchronize injection_room_orders status if applicable
+    try {
+      await client.query(
+        `UPDATE injection_room_orders 
+         SET status = 'dispensed', updated_at = NOW() 
+         WHERE (visit_id::text = $1::text AND LOWER(TRIM(drug_name)) = LOWER(TRIM($2))) 
+            OR id::text = $3::text`,
+        [String(prescription.visit_id), prescription.drug_name, String(req.params.id)]
+      );
+    } catch (injErr) {
+      console.error('Notice updating injection order status:', injErr.message);
+    }
 
     // 5. Automatically mark the pharmacy phase as completed if all prescriptions for this visit are now dispensed
     try {
       const pendingCheck = await client.query(
-        `SELECT COUNT(*) FROM prescriptions WHERE visit_id = $1 AND (status = 'pending' OR status IS NULL)`,
-        [prescription.visit_id]
+        `SELECT COUNT(*) FROM prescriptions WHERE visit_id::text = $1::text AND (status = 'pending' OR status IS NULL)`,
+        [String(prescription.visit_id)]
       );
       if (parseInt(pendingCheck.rows[0].count) === 0) {
         await client.query(
-          `UPDATE visits SET status = 'completed', updated_at = NOW() WHERE id = $1 AND (pharmacy_id = $2 OR pharmacy_id IS NULL) AND status IN ('pharmacy', 'WAITING_PHARMACY')`,
-          [prescription.visit_id, req.pharmacy_id]
+          `UPDATE visits SET status = 'completed', updated_at = NOW() 
+           WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text OR pharmacy_id IS NULL) 
+             AND status IN ('pharmacy', 'WAITING_PHARMACY')`,
+          [String(prescription.visit_id), req.pharmacy_id ? String(req.pharmacy_id) : null]
         );
       }
     } catch (err) {

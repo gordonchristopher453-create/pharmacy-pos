@@ -272,6 +272,11 @@ const getPharmacyQueue = async (req, res) => {
         OR (vp.latest_prescription_at::date >= $${params.length - 1}::date AND vp.latest_prescription_at::date <= $${params.length}::date)
         OR ((v.created_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (v.created_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
         OR ((vp.latest_prescription_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (vp.latest_prescription_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
+        OR EXISTS (
+          SELECT 1 FROM prescriptions pr_pend 
+          WHERE pr_pend.visit_id::text = v.id::text 
+            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
+        )
       )`;
     } else if (date_from) {
       params.push(date_from);
@@ -280,9 +285,23 @@ const getPharmacyQueue = async (req, res) => {
         OR vp.latest_prescription_at::date = $${params.length}::date
         OR (v.created_at AT TIME ZONE 'UTC')::date = $${params.length}::date
         OR (vp.latest_prescription_at AT TIME ZONE 'UTC')::date = $${params.length}::date
+        OR EXISTS (
+          SELECT 1 FROM prescriptions pr_pend 
+          WHERE pr_pend.visit_id::text = v.id::text 
+            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
+        )
       )`;
     } else if (all_dates !== 'true') {
-      extraClauses += ` AND (v.created_at::date = CURRENT_DATE OR vp.latest_prescription_at::date = CURRENT_DATE OR (v.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE OR 1=1)`;
+      extraClauses += ` AND (
+        v.created_at::date = CURRENT_DATE 
+        OR vp.latest_prescription_at::date = CURRENT_DATE 
+        OR (v.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE 
+        OR EXISTS (
+          SELECT 1 FROM prescriptions pr_pend 
+          WHERE pr_pend.visit_id::text = v.id::text 
+            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
+        )
+      )`;
     }
 
     if (include_inpatient !== 'true') {

@@ -172,8 +172,8 @@ const getPayroll = async (req, res) => {
     const { month, year } = req.query;
     const payroll = await FinanceModel.getPayroll({
       pharmacy_id: req.pharmacy_id,
-      month: month ? parseInt(month) : null,
-      year: year ? parseInt(year) : null
+      month: (month && month !== 'all' && parseInt(month) > 0) ? parseInt(month) : null,
+      year: (year && year !== 'all' && parseInt(year) > 0) ? parseInt(year) : null
     });
     return successResponse(res, 200, 'Payroll fetched', payroll);
   } catch (error) {

@@ -1153,14 +1153,23 @@ async function runMigrationsAndSeed(p) {
 
     // Ensure all required columns exist on prescriptions table
     try {
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS price NUMERIC(10,2) DEFAULT 0`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS route VARCHAR(50) DEFAULT 'oral'`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS instructions TEXT`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity INT DEFAULT 1`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending'`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS dosage VARCHAR(100)`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS frequency VARCHAR(100)`);
-      await p.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS duration VARCHAR(100)`);
+      await p.query(`
+        ALTER TABLE prescriptions ALTER COLUMN consultation_id DROP NOT NULL;
+        ALTER TABLE prescriptions ALTER COLUMN doctor_id DROP NOT NULL;
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS price NUMERIC(10,2) DEFAULT 0;
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS unit_price NUMERIC(10,2) DEFAULT 0;
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS product_id VARCHAR(150);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS encounter_id VARCHAR(100);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS route VARCHAR(50) DEFAULT 'oral';
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS instructions TEXT;
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity NUMERIC DEFAULT 1;
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS dosage VARCHAR(100);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS frequency VARCHAR(100);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS duration VARCHAR(100);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS ddc_code VARCHAR(100);
+        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS scientific_code VARCHAR(100);
+      `);
     } catch (prErr) {
       logger.error(`Error ensuring prescriptions columns: ${prErr.message}`);
     }
@@ -1711,6 +1720,52 @@ async function runMigrationsAndSeed(p) {
           applied_at TIMESTAMPTZ DEFAULT NOW(),
           actioned_at TIMESTAMPTZ
         );
+
+        CREATE TABLE IF NOT EXISTS payroll (
+          id SERIAL PRIMARY KEY,
+          pharmacy_id TEXT,
+          user_id VARCHAR(100),
+          staff_id INT,
+          employee_name VARCHAR(255) NOT NULL,
+          employee_email VARCHAR(255),
+          role VARCHAR(100),
+          month INT NOT NULL,
+          year INT NOT NULL,
+          basic_salary NUMERIC(12,2) DEFAULT 0.00,
+          allowances NUMERIC(12,2) DEFAULT 0.00,
+          paye NUMERIC(12,2) DEFAULT 0.00,
+          sha NUMERIC(12,2) DEFAULT 0.00,
+          nssf NUMERIC(12,2) DEFAULT 0.00,
+          housing_levy NUMERIC(12,2) DEFAULT 0.00,
+          other_deductions NUMERIC(12,2) DEFAULT 0.00,
+          deductions NUMERIC(12,2) DEFAULT 0.00,
+          net_salary NUMERIC(12,2) DEFAULT 0.00,
+          payment_status VARCHAR(50) DEFAULT 'Paid',
+          payment_date DATE DEFAULT CURRENT_DATE,
+          payment_method VARCHAR(50) DEFAULT 'Bank Transfer',
+          bank_name VARCHAR(100),
+          bank_account VARCHAR(100),
+          kra_pin VARCHAR(50),
+          notes TEXT,
+          created_by VARCHAR(100),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- Ensure any existing payroll table has all necessary columns
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS paye NUMERIC(12,2) DEFAULT 0.00;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS sha NUMERIC(12,2) DEFAULT 0.00;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS nssf NUMERIC(12,2) DEFAULT 0.00;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS housing_levy NUMERIC(12,2) DEFAULT 0.00;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS other_deductions NUMERIC(12,2) DEFAULT 0.00;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'Paid';
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_date DATE DEFAULT CURRENT_DATE;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'Bank Transfer';
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100);
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS bank_account VARCHAR(100);
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS kra_pin VARCHAR(50);
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS notes TEXT;
+        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
 
         CREATE TABLE IF NOT EXISTS payroll_records (
           id SERIAL PRIMARY KEY,

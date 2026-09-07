@@ -542,8 +542,7 @@ export default function POSPage() {
   const fetchRxQueue = useCallback(async () => {
     setRxLoading(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const res = await api.get(`/consultations/pharmacy-queue?date_from=${today}&date_to=${today}`);
+      const res = await api.get(`/consultations/pharmacy-queue?all_dates=true&include_inpatient=true`);
       setRxQueue(res.data.data || []);
     } catch {}
     finally { setRxLoading(false); }

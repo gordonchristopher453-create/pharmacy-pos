@@ -278,12 +278,14 @@ export default function FinancePage() {
 
   // Generate Batch Payroll
   const handleGenerateBatchPayroll = async () => {
-    if (!window.confirm(`Generate automated statutory payroll batch for ${MONTHS[payrollMonth - 1]} ${payrollYear}?`)) return;
+    const targetMonth = payrollMonth === 'all' ? (new Date().getMonth() + 1) : payrollMonth;
+    const targetYear = payrollYear === 'all' ? new Date().getFullYear() : payrollYear;
+    if (!window.confirm(`Generate automated statutory payroll batch for ${MONTHS[targetMonth - 1]} ${targetYear}?`)) return;
     setSaving(true);
     try {
       const res = await api.post('/finance/payroll/batch', {
-        month: payrollMonth,
-        year: payrollYear
+        month: targetMonth,
+        year: targetYear
       });
       toast.success(res.data?.message || 'Batch payroll generated successfully!');
       loadFinancialData();
@@ -312,8 +314,9 @@ export default function FinancePage() {
       toast.error('No payroll records found for this period');
       return;
     }
-    const headers = ['Employee Name', 'Role', 'Bank Name', 'Account Number', 'Gross Pay', 'Total Deductions', 'Net Salary Payable', 'KRA PIN'];
+    const headers = ['Period', 'Employee Name', 'Role', 'Bank Name', 'Account Number', 'Gross Pay', 'Total Deductions', 'Net Salary Payable', 'KRA PIN'];
     const rows = payroll.map(p => [
+      `"${MONTHS[(p.month || 1) - 1]} ${p.year}"`,
       `"${p.employee_name}"`,
       `"${p.role || ''}"`,
       `"${p.bank_name || 'Bank Transfer'}"`,
@@ -328,7 +331,8 @@ export default function FinancePage() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Bank_Salary_Payment_Schedule_${MONTHS[payrollMonth - 1]}_${payrollYear}.csv`);
+    const periodLabel = payrollMonth === 'all' ? 'All_History' : `${MONTHS[payrollMonth - 1]}_${payrollYear}`;
+    link.setAttribute('download', `Bank_Salary_Payment_Schedule_${periodLabel}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -720,24 +724,51 @@ export default function FinancePage() {
               <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Payroll Period:</span>
               <select
                 value={payrollMonth}
-                onChange={e => setPayrollMonth(parseInt(e.target.value))}
+                onChange={e => setPayrollMonth(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
                 style={{
                   padding: '8px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border)',
                   borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none'
                 }}
               >
+                <option value="all">📅 All Months (Full History)</option>
                 {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
               </select>
               <select
                 value={payrollYear}
-                onChange={e => setPayrollYear(parseInt(e.target.value))}
+                onChange={e => setPayrollYear(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
                 style={{
                   padding: '8px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border)',
                   borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none'
                 }}
               >
-                {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                <option value="all">All Years</option>
+                {[2023, 2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
               </select>
+
+              <button
+                type="button"
+                onClick={() => { setPayrollMonth('all'); setPayrollYear('all'); }}
+                style={{
+                  padding: '7px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  border: '1px solid var(--border)',
+                  background: payrollMonth === 'all' && payrollYear === 'all' ? 'var(--accent)' : 'var(--bg-surface)',
+                  color: payrollMonth === 'all' && payrollYear === 'all' ? '#0F1612' : 'var(--text-muted)'
+                }}
+              >
+                Full History
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPayrollMonth(new Date().getMonth() + 1); setPayrollYear(new Date().getFullYear()); }}
+                style={{
+                  padding: '7px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  border: '1px solid var(--border)',
+                  background: payrollMonth === (new Date().getMonth() + 1) && payrollYear === new Date().getFullYear() ? 'var(--accent)' : 'var(--bg-surface)',
+                  color: payrollMonth === (new Date().getMonth() + 1) && payrollYear === new Date().getFullYear() ? '#0F1612' : 'var(--text-muted)'
+                }}
+              >
+                Current Month
+              </button>
             </div>
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -768,7 +799,8 @@ export default function FinancePage() {
                 onClick={() => {
                   setPayrollForm({
                     user_id: '', employee_name: '', employee_email: '', role: '',
-                    month: payrollMonth, year: payrollYear,
+                    month: payrollMonth === 'all' ? (new Date().getMonth() + 1) : payrollMonth,
+                    year: payrollYear === 'all' ? new Date().getFullYear() : payrollYear,
                     basic_salary: '', allowances: '', paye: '', sha: '', nssf: '', housing_levy: '', other_deductions: '', notes: ''
                   });
                   setShowPayrollModal(true);
@@ -784,13 +816,39 @@ export default function FinancePage() {
             </div>
           </div>
 
+          {/* Payroll KPI Summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <div style={{ padding: '12px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Records / Staff</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', marginTop: 4 }}>{payroll.length}</div>
+            </div>
+            <div style={{ padding: '12px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Gross Salaries</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', marginTop: 4, fontFamily: 'monospace' }}>
+                {fmt(payroll.reduce((sum, p) => sum + parseFloat(p.basic_salary || 0) + parseFloat(p.allowances || 0), 0))}
+              </div>
+            </div>
+            <div style={{ padding: '12px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Deductions</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#ef4444', marginTop: 4, fontFamily: 'monospace' }}>
+                {fmt(payroll.reduce((sum, p) => sum + parseFloat(p.paye || 0) + parseFloat(p.sha || 0) + parseFloat(p.nssf || 0) + parseFloat(p.housing_levy || 0) + parseFloat(p.other_deductions || 0), 0))}
+              </div>
+            </div>
+            <div style={{ padding: '12px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Net Disbursed</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#10b981', marginTop: 4, fontFamily: 'monospace' }}>
+                {fmt(payroll.reduce((sum, p) => sum + parseFloat(p.net_salary || 0), 0))}
+              </div>
+            </div>
+          </div>
+
           {/* Payroll Table */}
           <Card>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-                    {['Employee', 'Role', 'Basic Pay', 'Allowances', 'Gross Pay', 'PAYE Tax', 'SHA (2.75%)', 'NSSF', 'Housing Levy', 'Net Salary', 'Actions'].map(h => (
+                    {['Period', 'Employee', 'Role', 'Basic Pay', 'Allowances', 'Gross Pay', 'PAYE Tax', 'SHA (2.75%)', 'NSSF', 'Housing Levy', 'Net Salary', 'Actions'].map(h => (
                       <th key={h} style={{ padding: '11px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -798,14 +856,19 @@ export default function FinancePage() {
                 <tbody>
                   {payroll.length === 0 ? (
                     <tr>
-                      <td colSpan={11} style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>
-                        No payroll computed for {MONTHS[payrollMonth - 1]} {payrollYear}. Click "Generate Batch Payroll" to calculate staff salaries automatically.
+                      <td colSpan={12} style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>
+                        No payroll computed for {payrollMonth === 'all' ? 'the selected period' : `${MONTHS[payrollMonth - 1]} ${payrollYear}`}. Click "Generate Batch Payroll" to calculate staff salaries automatically.
                       </td>
                     </tr>
                   ) : payroll.map(p => {
                     const gross = parseFloat(p.basic_salary || 0) + parseFloat(p.allowances || 0);
                     return (
                       <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 6, background: 'var(--bg-elevated)', color: 'var(--accent)' }}>
+                            {MONTHS[(p.month || 1) - 1]} {p.year}
+                          </span>
+                        </td>
                         <td style={{ padding: '10px 12px' }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{p.employee_name}</div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.bank_name || 'Bank Transfer'} ({p.bank_account || '—'})</div>

@@ -180,26 +180,57 @@ class FinanceModel {
     const total_ded = p + s + n + h + o;
     const net = b + a - total_ded;
 
-    const result = await pool.query(`
-      INSERT INTO payroll (
-        pharmacy_id, user_id, employee_name, employee_email, role,
-        month, year, basic_salary, allowances,
-        paye, sha, nssf, housing_levy, other_deductions,
-        net_salary, notes, created_by
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-      ON CONFLICT (pharmacy_id, user_id, month, year)
-      DO UPDATE SET
-        basic_salary=$8, allowances=$9,
-        paye=$10, sha=$11, nssf=$12, housing_levy=$13, other_deductions=$14,
-        net_salary=$15, notes=$16
-      RETURNING *
-    `, [
-      pharmacy_id, user_id || null, employee_name, employee_email, role,
-      month, year, b, a,
-      p, s, n, h, o,
-      net, notes, created_by
-    ]);
+    let existing = null;
+    try {
+      if (user_id) {
+        const exRes = await pool.query(
+          `SELECT id FROM payroll WHERE ($1::text IS NULL OR pharmacy_id::text = $1::text) AND user_id::text = $2::text AND month = $3 AND year = $4 LIMIT 1`,
+          [pharmacy_id, String(user_id), parseInt(month), parseInt(year)]
+        );
+        existing = exRes.rows[0];
+      }
+      if (!existing && employee_name) {
+        const exRes2 = await pool.query(
+          `SELECT id FROM payroll WHERE ($1::text IS NULL OR pharmacy_id::text = $1::text) AND LOWER(TRIM(employee_name)) = LOWER(TRIM($2)) AND month = $3 AND year = $4 LIMIT 1`,
+          [pharmacy_id, employee_name, parseInt(month), parseInt(year)]
+        );
+        existing = exRes2.rows[0];
+      }
+    } catch (findErr) {
+      logger.warn('Error checking existing payroll: ' + findErr.message);
+    }
+
+    let result;
+    if (existing) {
+      result = await pool.query(`
+        UPDATE payroll SET
+          employee_name = $1, employee_email = $2, role = $3,
+          basic_salary = $4, allowances = $5,
+          paye = $6, sha = $7, nssf = $8, housing_levy = $9, other_deductions = $10,
+          deductions = $11, net_salary = $12, notes = $13, updated_at = NOW()
+        WHERE id = $14
+        RETURNING *
+      `, [
+        employee_name, employee_email || null, role || null,
+        b, a, p, s, n, h, o, total_ded, net, notes || null, existing.id
+      ]);
+    } else {
+      result = await pool.query(`
+        INSERT INTO payroll (
+          pharmacy_id, user_id, employee_name, employee_email, role,
+          month, year, basic_salary, allowances,
+          paye, sha, nssf, housing_levy, other_deductions,
+          deductions, net_salary, notes, created_by
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        RETURNING *
+      `, [
+        pharmacy_id, user_id || null, employee_name, employee_email || null, role || null,
+        parseInt(month), parseInt(year), b, a,
+        p, s, n, h, o, total_ded,
+        net, notes || null, created_by || null
+      ]);
+    }
     return result.rows[0];
   }
 
@@ -271,25 +302,69 @@ class FinanceModel {
   static async getPayroll({ pharmacy_id, month, year }) {
     let query = `
       SELECT p.*, u.full_name as created_by_name,
-             sp.bank_name, sp.bank_account, sp.kra_pin, sp.nssf_number, sp.sha_number, sp.mpesa_number
+             sp.bank_name as staff_bank_name, sp.bank_account as staff_bank_account,
+             sp.kra_pin as staff_kra_pin, sp.nssf_number, sp.sha_number, sp.mpesa_number
       FROM payroll p
       LEFT JOIN users u ON p.created_by::text = u.id::text
       LEFT JOIN staff_profiles sp ON p.user_id::text = sp.user_id::text
       WHERE ($1::text IS NULL OR p.pharmacy_id::text = $1::text)
     `;
     const params = [pharmacy_id];
-    if (month) { params.push(month); query += ` AND p.month = $${params.length}`; }
-    if (year) { params.push(year); query += ` AND p.year = $${params.length}`; }
+    if (month && month !== 'all' && parseInt(month) > 0) { 
+      params.push(parseInt(month)); 
+      query += ` AND p.month = $${params.length}`; 
+    }
+    if (year && year !== 'all' && parseInt(year) > 0) { 
+      params.push(parseInt(year)); 
+      query += ` AND p.year = $${params.length}`; 
+    }
     query += ` ORDER BY p.year DESC, p.month DESC, p.employee_name ASC`;
-    const result = await pool.query(query, params);
-    return result.rows;
+    try {
+      const result = await pool.query(query, params);
+      return result.rows;
+    } catch (e) {
+      logger.warn('Error fetching payroll, checking fallback: ' + e.message);
+      try {
+        let altQuery = `
+          SELECT pr.*, u.full_name as created_by_name
+          FROM payroll_records pr
+          LEFT JOIN users u ON pr.user_id::text = u.id::text
+          WHERE ($1::text IS NULL OR pr.pharmacy_id::text = $1::text)
+        `;
+        const altParams = [pharmacy_id];
+        if (month && month !== 'all' && parseInt(month) > 0) { 
+          altParams.push(parseInt(month)); 
+          altQuery += ` AND pr.month = $${altParams.length}`; 
+        }
+        if (year && year !== 'all' && parseInt(year) > 0) { 
+          altParams.push(parseInt(year)); 
+          altQuery += ` AND pr.year = $${altParams.length}`; 
+        }
+        altQuery += ` ORDER BY pr.year DESC, pr.month DESC, pr.employee_name ASC`;
+        const altRes = await pool.query(altQuery, altParams);
+        return altRes.rows;
+      } catch (err2) {
+        return [];
+      }
+    }
   }
 
   static async deletePayroll(id, pharmacy_id) {
-    const result = await pool.query(`
-      DELETE FROM payroll WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text) RETURNING id
-    `, [id, pharmacy_id]);
-    return result.rows[0];
+    try {
+      const result = await pool.query(`
+        DELETE FROM payroll WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text) RETURNING id
+      `, [id, pharmacy_id]);
+      if (result.rows[0]) return result.rows[0];
+    } catch (e) {}
+
+    try {
+      const altResult = await pool.query(`
+        DELETE FROM payroll_records WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text) RETURNING id
+      `, [id, pharmacy_id]);
+      return altResult.rows[0];
+    } catch (e) {
+      return null;
+    }
   }
 
   // ─── CASH FLOW ──────────────────────────────────────────
