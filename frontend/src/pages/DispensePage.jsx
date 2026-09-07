@@ -33,6 +33,9 @@ export default function DispensePage({ user: propUser }) {
   const today = new Date().toISOString().split('T')[0];
   const [dateFrom, setDateFrom]     = useState(today);
   const [dateTo, setDateTo]         = useState(today);
+  const [queueDateFrom, setQueueDateFrom] = useState(today);
+  const [queueDateTo, setQueueDateTo]     = useState(today);
+  const [queueAllDates, setQueueAllDates] = useState(false);
   const [queueDate, setQueueDate]   = useState(today);
   const [queueSearch, setQueueSearch] = useState('');
 
@@ -40,11 +43,11 @@ export default function DispensePage({ user: propUser }) {
     if (!silent) setRxLoading(true);
     try {
       const params = new URLSearchParams();
-      if (queueDate) {
-        params.append('date_from', queueDate);
-        params.append('date_to', queueDate);
-      } else {
+      if (queueAllDates) {
         params.append('all_dates', 'true');
+      } else {
+        if (queueDateFrom) params.append('date_from', queueDateFrom);
+        if (queueDateTo) params.append('date_to', queueDateTo);
       }
       if (queueSearch) params.append('search', queueSearch);
       
@@ -90,7 +93,7 @@ export default function DispensePage({ user: propUser }) {
     finally { 
       if (!silent) setRxLoading(false); 
     }
-  }, [queueDate, queueSearch]);
+  }, [queueDateFrom, queueDateTo, queueAllDates, queueSearch]);
 
   const fetchInpatientQueue = useCallback(async (silent = false) => {
     if (!silent) setRxLoading(true);
@@ -261,15 +264,80 @@ export default function DispensePage({ user: propUser }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'flex-end' }}>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>FILTER DATE</label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input type="date" value={queueDate} onChange={e => setQueueDate(e.target.value)}
-                    style={{ padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
-                  <button onClick={() => setQueueDate(today)} style={{ padding: '0 12px', background: queueDate === today ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${queueDate === today ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, color: queueDate === today ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                    Today
-                  </button>
-                  <button onClick={() => setQueueDate('')} style={{ padding: '0 12px', background: !queueDate ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${!queueDate ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, color: !queueDate ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                    All Pending
-                  </button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 4, background: 'var(--bg-elevated)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQueueAllDates(false);
+                        setQueueDateFrom(today);
+                        setQueueDateTo(today);
+                      }}
+                      style={{
+                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        background: !queueAllDates && queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                        color: !queueAllDates && queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                      }}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+                        setQueueAllDates(false);
+                        setQueueDateFrom(w);
+                        setQueueDateTo(today);
+                      }}
+                      style={{
+                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        background: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                        color: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                      }}
+                    >
+                      7 Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueAllDates(true)}
+                      style={{
+                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        background: queueAllDates ? 'var(--accent)' : 'transparent',
+                        color: queueAllDates ? '#0F1612' : 'var(--text-muted)'
+                      }}
+                    >
+                      All
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+                    <input
+                      type="date"
+                      value={queueDateFrom}
+                      onChange={e => {
+                        setQueueAllDates(false);
+                        const val = e.target.value;
+                        setQueueDateFrom(val);
+                        if (queueDateTo < val) setQueueDateTo(val);
+                      }}
+                      style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+                    <input
+                      type="date"
+                      value={queueDateTo}
+                      onChange={e => {
+                        setQueueAllDates(false);
+                        const val = e.target.value;
+                        setQueueDateTo(val);
+                      }}
+                      style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                    />
+                  </div>
                 </div>
               </div>
               <div>

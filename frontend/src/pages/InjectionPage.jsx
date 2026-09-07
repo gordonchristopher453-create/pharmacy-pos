@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
-import { Plus, X, Loader, RefreshCw, Search, CheckCircle, Clock, DollarSign, CreditCard, AlertTriangle, ShieldCheck, Check, FileText } from 'lucide-react';
+import { Plus, X, Loader, RefreshCw, Search, CheckCircle, Clock, DollarSign, CreditCard, AlertTriangle, ShieldCheck, Check, FileText, Calendar } from 'lucide-react';
 
 const PAYMENT_METHODS = [
   { value: 'mpesa', label: '📱 M-Pesa' },
@@ -150,8 +150,14 @@ export default function InjectionPage() {
   const [histLoading, setHistLoading] = useState(false);
   const [search, setSearch] = useState('');
   const today = new Date().toISOString().split('T')[0];
+  const [queueDateFrom, setQueueDateFrom] = useState(today);
+  const [queueDateTo, setQueueDateTo]     = useState(today);
+  const [queueAllDates, setQueueAllDates] = useState(false);
   const [queueDate, setQueueDate] = useState(today);
   const [histSearch, setHistSearch] = useState('');
+  const [histDateFrom, setHistDateFrom]   = useState(today);
+  const [histDateTo, setHistDateTo]       = useState(today);
+  const [histAllDates, setHistAllDates]   = useState(false);
   const [histDate, setHistDate] = useState(today);
   const [selected, setSelected] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -338,16 +344,22 @@ export default function InjectionPage() {
   };
 
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t); }, []);
-  useEffect(() => { fetchVisits(); }, [queueDate]);
+  useEffect(() => { fetchVisits(); }, [queueDateFrom, queueDateTo, queueAllDates]);
   useEffect(() => { fetchProducts(); }, []);
   useEffect(() => { fetchServicePrices(); }, []);
-  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, histDate, histSearch]);
+  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, histDateFrom, histDateTo, histAllDates, histSearch]);
 
   const fetchVisits = async () => {
     setLoading(true);
     try {
-      const d = queueDate || new Date().toISOString().split('T')[0];
-      const res = await api.get(`/injection-room?date=${d}`);
+      const params = new URLSearchParams();
+      if (queueAllDates) {
+        params.append('all_dates', 'true');
+      } else {
+        if (queueDateFrom) params.append('date_from', queueDateFrom);
+        if (queueDateTo) params.append('date_to', queueDateTo);
+      }
+      const res = await api.get(`/injection-room?${params.toString()}`);
       setVisits(res.data.data.visits || []);
       setStats(res.data.data.stats || {});
     } catch { toast.error('Failed to load injection room'); }
@@ -369,9 +381,14 @@ export default function InjectionPage() {
     setHistLoading(true);
     try {
       const params = new URLSearchParams();
-      if (histDate) params.append('date', histDate);
+      if (histAllDates) {
+        params.append('all_dates', 'true');
+      } else {
+        if (histDateFrom) params.append('date_from', histDateFrom);
+        if (histDateTo) params.append('date_to', histDateTo);
+      }
       if (histSearch) params.append('search', histSearch);
-      const res = await api.get(`/injection-room/history?${params}`);
+      const res = await api.get(`/injection-room/history?${params.toString()}`);
       setHistory(res.data.data || []);
     } catch { toast.error('Failed to load history'); }
     finally { setHistLoading(false); }
@@ -1382,29 +1399,198 @@ export default function InjectionPage() {
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
               <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
                 <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search patient..."
                   style={{ width: '100%', padding: '9px 9px 9px 36px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
                 {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={14} /></button>}
               </div>
-              <input type="date" value={queueDate} onChange={e => setQueueDate(e.target.value)}
-                style={{ padding: '9px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
+
+              {/* Queue Date Range Filter */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px', flexWrap: 'wrap' }}>
+                <Calendar size={14} style={{ color: 'var(--accent)' }} />
+                <div style={{ display: 'flex', gap: 4, background: 'var(--bg-surface)', padding: 2, borderRadius: 6, border: '1px solid var(--border)' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQueueAllDates(false);
+                      setQueueDateFrom(today);
+                      setQueueDateTo(today);
+                    }}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      background: !queueAllDates && queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                      color: !queueAllDates && queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                    }}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+                      setQueueAllDates(false);
+                      setQueueDateFrom(w);
+                      setQueueDateTo(today);
+                    }}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      background: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                      color: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                    }}
+                  >
+                    7 Days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQueueAllDates(true)}
+                    style={{
+                      padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      background: queueAllDates ? 'var(--accent)' : 'transparent',
+                      color: queueAllDates ? '#0F1612' : 'var(--text-muted)'
+                    }}
+                  >
+                    All
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+                  <input
+                    type="date"
+                    value={queueDateFrom}
+                    onChange={e => {
+                      setQueueAllDates(false);
+                      const val = e.target.value;
+                      setQueueDateFrom(val);
+                      if (queueDateTo < val) setQueueDateTo(val);
+                    }}
+                    style={{ padding: '4px 6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+                  <input
+                    type="date"
+                    value={queueDateTo}
+                    onChange={e => {
+                      setQueueAllDates(false);
+                      const val = e.target.value;
+                      setQueueDateTo(val);
+                    }}
+                    style={{ padding: '4px 6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                  />
+                </div>
+              </div>
             </div>
           </>
         )}
 
         {tab === 'history' && (
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
               <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               <input value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="Search name, number or phone..."
                 style={{ width: '100%', padding: '9px 9px 9px 36px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
               {histSearch && <button onClick={() => setHistSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={14} /></button>}
             </div>
-            <input type="date" value={histDate} onChange={e => setHistDate(e.target.value)}
-              style={{ padding: '9px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
+
+            {/* History Date Range Filter */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px', flexWrap: 'wrap' }}>
+              <Calendar size={14} style={{ color: 'var(--accent)' }} />
+              <div style={{ display: 'flex', gap: 4, background: 'var(--bg-surface)', padding: 2, borderRadius: 6, border: '1px solid var(--border)' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistAllDates(false);
+                    setHistDateFrom(today);
+                    setHistDateTo(today);
+                  }}
+                  style={{
+                    padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: !histAllDates && histDateFrom === today && histDateTo === today ? 'var(--accent)' : 'transparent',
+                    color: !histAllDates && histDateFrom === today && histDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                  }}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+                    setHistAllDates(false);
+                    setHistDateFrom(w);
+                    setHistDateTo(today);
+                  }}
+                  style={{
+                    padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: !histAllDates && histDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && histDateTo === today ? 'var(--accent)' : 'transparent',
+                    color: !histAllDates && histDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && histDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                  }}
+                >
+                  7 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const m = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+                    setHistAllDates(false);
+                    setHistDateFrom(m);
+                    setHistDateTo(today);
+                  }}
+                  style={{
+                    padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: !histAllDates && histDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && histDateTo === today ? 'var(--accent)' : 'transparent',
+                    color: !histAllDates && histDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && histDateTo === today ? '#0F1612' : 'var(--text-muted)'
+                  }}
+                >
+                  Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistAllDates(true)}
+                  style={{
+                    padding: '3px 8px', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: histAllDates ? 'var(--accent)' : 'transparent',
+                    color: histAllDates ? '#0F1612' : 'var(--text-muted)'
+                  }}
+                >
+                  All
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+                <input
+                  type="date"
+                  value={histDateFrom}
+                  onChange={e => {
+                    setHistAllDates(false);
+                    const val = e.target.value;
+                    setHistDateFrom(val);
+                    if (histDateTo < val) setHistDateTo(val);
+                  }}
+                  style={{ padding: '4px 6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+                <input
+                  type="date"
+                  value={histDateTo}
+                  onChange={e => {
+                    setHistAllDates(false);
+                    const val = e.target.value;
+                    setHistDateTo(val);
+                  }}
+                  style={{ padding: '4px 6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

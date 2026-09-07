@@ -18,7 +18,7 @@ router.post('/visit/:visit_id/pay',   protect, payVisitBill);
 // Inpatient Bills (Cashier module)
 router.get('/inpatient-folder', protect, async (req, res) => {
   try {
-    const { status = 'all', search } = req.query;
+    const { status = 'all', search, date_from, date_to } = req.query;
     
     // First trigger bed charge sync for all active admissions
     const inpatientRoutes = require('./inpatient.routes');
@@ -53,6 +53,15 @@ router.get('/inpatient-folder', protect, async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       whereSql += ` AND (p.full_name ILIKE $${params.length} OR p.patient_number ILIKE $${params.length} OR w.name ILIKE $${params.length} OR v.visit_number ILIKE $${params.length})`;
+    }
+
+    if (date_from) {
+      params.push(date_from);
+      whereSql += ` AND DATE(v.created_at) >= $${params.length}`;
+    }
+    if (date_to) {
+      params.push(date_to);
+      whereSql += ` AND DATE(v.created_at) <= $${params.length}`;
     }
 
     const result = await pool.query(`
@@ -221,10 +230,11 @@ router.get('/payments', protect, async (req, res) => {
 // Patient Payment History (for receptionist to view & print combined receipts after discharge or during active visit)
 router.get('/patient-history', protect, async (req, res) => {
   try {
-    const { search, status, date_from, date_to, limit = 100 } = req.query;
+    const { search, status, date_from, date_to, all_dates, limit = 100 } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
     const today = new Date().toISOString().split('T')[0];
-    const dFrom = date_from || (search ? null : today);
-    const dTo = date_to || (search ? null : today);
+    const dFrom = isAllDates ? null : (date_from || (search ? null : today));
+    const dTo = isAllDates ? null : (date_to || (search ? null : today));
     let whereClause = `WHERE ($1::text IS NULL OR v.pharmacy_id::text = $1::text)`;
     const params = [req.pharmacy_id];
 

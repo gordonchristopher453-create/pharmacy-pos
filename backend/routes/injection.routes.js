@@ -8,13 +8,30 @@ const StockModel = require('../models/stock.model');
 
 router.use(protect, requirePharmacy);
 
-// Get all injection room patients (optionally filtered by date)
+// Get all injection room patients (optionally filtered by date range)
 router.get('/', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date, date_from, date_to, all_dates } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
     const d = date || new Date().toISOString().split('T')[0];
-    const params = [req.pharmacy_id, d];
-    const dateWhere = ` AND DATE(v.created_at) = $2`;
+    const params = [req.pharmacy_id];
+    let dateWhere = '';
+
+    if (isAllDates) {
+      // No date boundary
+    } else if (date_from || date_to) {
+      if (date_from) {
+        params.push(date_from);
+        dateWhere += ` AND DATE(v.created_at) >= $${params.length}`;
+      }
+      if (date_to) {
+        params.push(date_to);
+        dateWhere += ` AND DATE(v.created_at) <= $${params.length}`;
+      }
+    } else {
+      params.push(d);
+      dateWhere = ` AND DATE(v.created_at) = $${params.length}`;
+    }
 
     const result = await pool.query(`
       SELECT v.*,
@@ -195,13 +212,28 @@ router.get('/', async (req, res) => {
 
 router.get("/history", async (req, res) => {
   try {
-    const { date, search } = req.query;
+    const { date, date_from, date_to, all_dates, search } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
     const today = new Date().toISOString().split('T')[0];
-    const d = date || (search ? null : today);
     const params = [req.pharmacy_id];
     let dateWhere = '';
-    if (d) {
-      params.push(d);
+
+    if (isAllDates) {
+      // No date restriction
+    } else if (date_from || date_to) {
+      if (date_from) {
+        params.push(date_from);
+        dateWhere += ` AND DATE(v.created_at) >= $${params.length}`;
+      }
+      if (date_to) {
+        params.push(date_to);
+        dateWhere += ` AND DATE(v.created_at) <= $${params.length}`;
+      }
+    } else if (date) {
+      params.push(date);
+      dateWhere = ` AND DATE(v.created_at) = $${params.length}`;
+    } else if (!search) {
+      params.push(today);
       dateWhere = ` AND DATE(v.created_at) = $${params.length}`;
     }
 

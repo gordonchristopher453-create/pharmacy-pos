@@ -192,8 +192,9 @@ const createVisit = async (req, res) => {
 
 const getVisits = async (req, res) => {
   try {
-    const { status, visit_type, date, date_from, date_to, limit, offset } = req.query;
-    const targetDate = (!date && !date_from && !date_to) ? new Date().toISOString().split('T')[0] : date;
+    const { status, visit_type, date, date_from, date_to, all_dates, limit, offset } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
+    const targetDate = (!isAllDates && !date && !date_from && !date_to) ? new Date().toISOString().split('T')[0] : (isAllDates ? null : date);
     const visits = await VisitModel.findAll({ 
       pharmacy_id: req.pharmacy_id, 
       status, 

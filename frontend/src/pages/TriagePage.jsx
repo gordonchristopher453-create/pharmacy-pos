@@ -106,9 +106,16 @@ export default function TriagePage() {
   const [histLoading, setHistLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [triageDate, setTriageDate] = useState(new Date().toISOString().split('T')[0]);
+  const today = new Date().toISOString().split('T')[0];
+  const [triageDateFrom, setTriageDateFrom] = useState(today);
+  const [triageDateTo, setTriageDateTo]     = useState(today);
+  const [triageAllDates, setTriageAllDates] = useState(false);
+  const [triageDate, setTriageDate] = useState(today);
   const [histSearch, setHistSearch] = useState('');
-  const [histDate, setHistDate] = useState(new Date().toISOString().split('T')[0]);
+  const [histDateFrom, setHistDateFrom]     = useState(today);
+  const [histDateTo, setHistDateTo]         = useState(today);
+  const [histAllDates, setHistAllDates]     = useState(false);
+  const [histDate, setHistDate] = useState(today);
   const [selected, setSelected] = useState(null);
   const [saving, setSaving] = useState(false);
   const [clock, setClock] = useState(new Date());
@@ -188,18 +195,22 @@ export default function TriagePage() {
         socket.off(`visit_updated_${user.pharmacy_id}`, fetchVisits);
       }
     };
-  }, [user, triageDate]);
+  }, [user, triageDateFrom, triageDateTo, triageAllDates]);
 
-  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, histDate]);
+  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, histDateFrom, histDateTo, histAllDates]);
 
   const fetchVisits = async () => {
     setLoading(true);
     try {
-      const d = triageDate || new Date().toISOString().split('T')[0];
       const params = {
-        status: 'WAITING_TRIAGE,waiting_triage,triage,IN_TRIAGE,waiting,open,triaged,REGISTERED,registered',
-        date: d
+        status: 'WAITING_TRIAGE,waiting_triage,triage,IN_TRIAGE,waiting,open,triaged,REGISTERED,registered'
       };
+      if (triageAllDates) {
+        params.all_dates = 'true';
+      } else {
+        if (triageDateFrom) params.date_from = triageDateFrom;
+        if (triageDateTo) params.date_to = triageDateTo;
+      }
       const res = await api.get('/patients/visits', { params });
       setVisits(res.data?.data?.visits || []);
       setStats(res.data?.data?.stats || {});
@@ -210,8 +221,14 @@ export default function TriagePage() {
   const fetchHistory = async () => {
     setHistLoading(true);
     try {
-      const url = histDate ? `/patients/visits?date=${histDate}` : '/patients/visits';
-      const res = await api.get(url);
+      const params = {};
+      if (histAllDates) {
+        params.all_dates = 'true';
+      } else {
+        if (histDateFrom) params.date_from = histDateFrom;
+        if (histDateTo) params.date_to = histDateTo;
+      }
+      const res = await api.get('/patients/visits', { params });
       setHistory(res.data?.data?.visits || []);
     } catch { toast.error('Failed to load history'); }
     finally { setHistLoading(false); }
@@ -522,32 +539,112 @@ export default function TriagePage() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-2.5 py-1.5">
-                  <Calendar size={13} className="text-[var(--text-muted)]" />
-                  <input 
-                    type="date" 
-                    value={tab === 'queue' ? triageDate : histDate} 
-                    onChange={e => tab === 'queue' ? setTriageDate(e.target.value) : setHistDate(e.target.value)}
-                    className="bg-transparent text-xs text-[var(--text-primary)] focus:outline-none"
-                  />
-                  {tab === 'queue' && (
-                    triageDate ? (
-                      <button
-                        onClick={() => setTriageDate('')}
-                        className="text-[10px] text-amber-400 hover:underline font-mono ml-1 font-bold"
-                        title="Show all pending queue across all dates"
-                      >
-                        All
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => setTriageDate(new Date().toISOString().split('T')[0])}
-                        className="text-[10px] text-[var(--accent)] hover:underline font-mono ml-1 font-bold"
-                      >
-                        Today
-                      </button>
-                    )
-                  )}
+                {/* Date Range Filter Toolbar */}
+                <div className="flex items-center gap-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-2.5 py-1 flex-wrap">
+                  <Calendar size={13} className="text-[var(--accent)]" />
+                  
+                  <div className="flex items-center gap-1 bg-[var(--bg-surface)] p-0.5 rounded-lg border border-[var(--border)]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (tab === 'queue') {
+                          setTriageAllDates(false);
+                          setTriageDateFrom(today);
+                          setTriageDateTo(today);
+                        } else {
+                          setHistAllDates(false);
+                          setHistDateFrom(today);
+                          setHistDateTo(today);
+                        }
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                        (tab === 'queue' ? (!triageAllDates && triageDateFrom === today && triageDateTo === today) : (!histAllDates && histDateFrom === today && histDateTo === today))
+                          ? 'bg-[var(--accent)] text-[#0F1612]'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+                        if (tab === 'queue') {
+                          setTriageAllDates(false);
+                          setTriageDateFrom(w);
+                          setTriageDateTo(today);
+                        } else {
+                          setHistAllDates(false);
+                          setHistDateFrom(w);
+                          setHistDateTo(today);
+                        }
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                        (tab === 'queue' ? (!triageAllDates && triageDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && triageDateTo === today) : (!histAllDates && histDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && histDateTo === today))
+                          ? 'bg-[var(--accent)] text-[#0F1612]'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      7 Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (tab === 'queue') {
+                          setTriageAllDates(true);
+                        } else {
+                          setHistAllDates(true);
+                        }
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                        (tab === 'queue' ? triageAllDates : histAllDates)
+                          ? 'bg-[var(--accent)] text-[#0F1612]'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      All
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">From:</span>
+                    <input 
+                      type="date" 
+                      value={tab === 'queue' ? triageDateFrom : histDateFrom} 
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (tab === 'queue') {
+                          setTriageAllDates(false);
+                          setTriageDateFrom(val);
+                          if (triageDateTo < val) setTriageDateTo(val);
+                        } else {
+                          setHistAllDates(false);
+                          setHistDateFrom(val);
+                          if (histDateTo < val) setHistDateTo(val);
+                        }
+                      }}
+                      className="bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-0.5 text-xs text-[var(--text-primary)] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">To:</span>
+                    <input 
+                      type="date" 
+                      value={tab === 'queue' ? triageDateTo : histDateTo} 
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (tab === 'queue') {
+                          setTriageAllDates(false);
+                          setTriageDateTo(val);
+                        } else {
+                          setHistAllDates(false);
+                          setHistDateTo(val);
+                        }
+                      }}
+                      className="bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-0.5 text-xs text-[var(--text-primary)] focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
