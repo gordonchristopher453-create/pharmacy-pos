@@ -88,6 +88,48 @@ const getBillingItems = async (req, res) => {
 };
 
 
+// ── Ensure schema is resilient against legacy column types ──
+let billingSchemaChecked = false;
+const ensureBillingSchema = async () => {
+  if (billingSchemaChecked) return;
+  try {
+    await pool.query(`
+      ALTER TABLE billing_items 
+        ADD COLUMN IF NOT EXISTS facility_id INT,
+        ADD COLUMN IF NOT EXISTS pharmacy_id INT,
+        ADD COLUMN IF NOT EXISTS item_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS collected_by VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS waived_by VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS reference_number VARCHAR(150),
+        ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150),
+        ADD COLUMN IF NOT EXISTS member_number VARCHAR(150),
+        ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150),
+        ADD COLUMN IF NOT EXISTS copay_amount NUMERIC(10,2) DEFAULT 0;
+    `);
+  } catch (_) {}
+
+  try {
+    await pool.query(`ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100) USING collected_by::text;`);
+  } catch (_) {}
+
+  try {
+    await pool.query(`ALTER TABLE billing_items ALTER COLUMN waived_by TYPE VARCHAR(100) USING waived_by::text;`);
+  } catch (_) {}
+
+  try {
+    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN user_id TYPE VARCHAR(100) USING user_id::text;`);
+  } catch (_) {}
+
+  try {
+    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text;`);
+  } catch (_) {}
+
+  billingSchemaChecked = true;
+};
+
 // ── Proper Financial Summary Report (Receptionist Daily / Admin & HR Date Range) ──
 const getDailySummary = async (req, res) => {
   try {
@@ -95,25 +137,7 @@ const getDailySummary = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
 
     // Ensure columns exist on-the-fly (self-healing for any database instance)
-    try {
-      await pool.query(`
-        ALTER TABLE billing_items 
-          ADD COLUMN IF NOT EXISTS facility_id INT,
-          ADD COLUMN IF NOT EXISTS pharmacy_id INT,
-          ADD COLUMN IF NOT EXISTS item_name VARCHAR(255),
-          ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS collected_by VARCHAR(100),
-          ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
-          ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50),
-          ADD COLUMN IF NOT EXISTS reference_number VARCHAR(150),
-          ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150),
-          ADD COLUMN IF NOT EXISTS member_number VARCHAR(150),
-          ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150),
-          ADD COLUMN IF NOT EXISTS copay_amount NUMERIC(10,2) DEFAULT 0;
-      `);
-    } catch (colErr) {
-      // Non-fatal if table already upgraded or permissions restricted
-    }
+    await ensureBillingSchema();
 
     const userRole = (req.user?.role || '').toLowerCase();
     const userPerms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
@@ -358,11 +382,17 @@ const getDailySummary = async (req, res) => {
 // ── Pay single billing item ────────────────────────────────
 const payBillingItem = async (req, res) => {
   try {
+    await ensureBillingSchema();
     const { payment_method } = req.body;
     const pMethod = (payment_method || 'cash').toLowerCase();
     const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
     const statusToSet = isInsurance ? pMethod : 'paid';
-    const collectorId = (req.user?.id !== undefined && req.user?.id !== null) ? String(req.user.id) : null;
+
+    let collectorId = null;
+    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
+      const s = String(req.user.id).trim();
+      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') collectorId = s;
+    }
 
     const result = await pool.query(`
       UPDATE billing_items
@@ -378,7 +408,7 @@ const payBillingItem = async (req, res) => {
       SELECT COUNT(*) AS pending_count FROM billing_items
       WHERE visit_id::text = $1::text AND status IN ('pending', 'partial')
     `, [String(result.rows[0].visit_id)]);
-    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0);
+    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0, 10);
     const feePaid = pendingCount === 0;
 
     await pool.query(`
@@ -387,11 +417,16 @@ const payBillingItem = async (req, res) => {
       WHERE id::text = $3::text
     `, [feePaid, pMethod, String(result.rows[0].visit_id)]);
 
-    await pool.query(`
-      INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
-      VALUES ($1,$2,'payment_received','billing_items',$3,$4)
-    `, [req.pharmacy_id, req.user.id, result.rows[0].id, JSON.stringify({ payment_method: pMethod, amount: result.rows[0].total_price })]);
-    const io = req.app.get('io');
+    try {
+      await pool.query(`
+        INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
+        VALUES ($1,$2,'payment_received','billing_items',$3,$4)
+      `, [req.pharmacy_id, collectorId, String(result.rows[0].id), JSON.stringify({ payment_method: pMethod, amount: result.rows[0].total_price })]);
+    } catch (auditErr) {
+      logger.warn('Audit log write warning in payBillingItem: ' + auditErr.message);
+    }
+
+    const io = req.app?.get ? req.app.get('io') : null;
     if (io) io.emit(`billing_paid_${req.pharmacy_id}`, result.rows[0]);
     return successResponse(res, 200, 'Payment recorded', result.rows[0]);
   } catch (e) { return errorResponse(res, 500, e.message); }
@@ -399,6 +434,7 @@ const payBillingItem = async (req, res) => {
 
 // ── Pay entire visit or partial deposit ──────────────────
 const payVisitBill = async (req, res) => {
+  await ensureBillingSchema();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -410,10 +446,23 @@ const payVisitBill = async (req, res) => {
     const pMethod = (payment_method || 'cash').toLowerCase();
     const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
     const statusToSet = isInsuranceMethod ? pMethod : 'paid';
-    const collectorId = (req.user?.id !== undefined && req.user?.id !== null) ? String(req.user.id) : null;
 
-    let depositToAllocate = (amount !== undefined && amount !== null && amount !== '') ? parseFloat(amount) : null;
-    const copayVal = (copay_amount !== undefined && copay_amount !== null && copay_amount !== '') ? parseFloat(copay_amount) : 0;
+    let collectorId = null;
+    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
+      const s = String(req.user.id).trim();
+      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') collectorId = s;
+    }
+
+    let depositToAllocate = (amount !== undefined && amount !== null && String(amount).trim() !== '') 
+      ? parseFloat(String(amount).replace(/,/g, '')) 
+      : null;
+    if (depositToAllocate !== null && isNaN(depositToAllocate)) depositToAllocate = null;
+
+    let copayVal = (copay_amount !== undefined && copay_amount !== null && String(copay_amount).trim() !== '') 
+      ? parseFloat(String(copay_amount).replace(/,/g, '')) 
+      : 0;
+    if (isNaN(copayVal)) copayVal = 0;
+
     const insProviderStr = isInsuranceMethod ? (insurance_provider || pMethod.toUpperCase()) : null;
 
     let itemsToPay = [];
@@ -453,8 +502,8 @@ const payVisitBill = async (req, res) => {
       let rem = depositToAllocate;
       for (const item of itemsToPay) {
         if (rem <= 0) break;
-        const tot = parseFloat(item.total_price || 0);
-        const alreadyPaid = parseFloat(item.paid_amount || 0);
+        const tot = !isNaN(parseFloat(item.total_price)) ? parseFloat(item.total_price) : 0;
+        const alreadyPaid = !isNaN(parseFloat(item.paid_amount)) ? parseFloat(item.paid_amount) : 0;
         const itemPending = Math.max(0, tot - alreadyPaid);
 
         if (rem >= itemPending) {
@@ -484,7 +533,7 @@ const payVisitBill = async (req, res) => {
     } else {
       // Pay all selected/pending items in full
       for (const item of itemsToPay) {
-        const tot = parseFloat(item.total_price || 0);
+        const tot = !isNaN(parseFloat(item.total_price)) ? parseFloat(item.total_price) : 0;
         const uRes = await client.query(`
           UPDATE billing_items
           SET status=$1, payment_method=$2, paid_amount=$3, reference_number=$4,
@@ -501,7 +550,7 @@ const payVisitBill = async (req, res) => {
       SELECT COUNT(*) AS pending_count FROM billing_items
       WHERE visit_id::text = $1::text AND status IN ('pending', 'partial')
     `, [vid]);
-    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0);
+    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0, 10);
     const feePaid = pendingCount === 0;
 
     // Update visit status & payment details
@@ -520,7 +569,7 @@ const payVisitBill = async (req, res) => {
       await pool.query(`
         INSERT INTO audit_logs (facility_id, pharmacy_id, user_id, action, table_name, record_id, new_values)
         VALUES ($1,$1,$2,'visit_payment_received','visit',$3,$4)
-      `, [req.pharmacy_id, req.user?.id ? Number(req.user.id) : null, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
+      `, [req.pharmacy_id, collectorId, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
     } catch (auditErr) {
       logger.warn('Audit log write warning in payVisitBill: ' + auditErr.message);
     }
@@ -541,13 +590,20 @@ const payVisitBill = async (req, res) => {
 // ── Waive a billing item ──────────────────────────────────
 const waiveBillingItem = async (req, res) => {
   try {
+    await ensureBillingSchema();
     const { waive_reason } = req.body;
+    let waiverId = null;
+    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
+      const s = String(req.user.id).trim();
+      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') waiverId = s;
+    }
+
     const result = await pool.query(`
       UPDATE billing_items
       SET status='waived', waived_by=$1, waive_reason=$2, updated_at=NOW()
-      WHERE id=$3 AND facility_id=$4
+      WHERE id::text=$3::text AND ($4::text IS NULL OR facility_id::text=$4::text OR pharmacy_id::text=$4::text)
       RETURNING *
-    `, [req.user.id, waive_reason||null, req.params.id, req.pharmacy_id]);
+    `, [waiverId, waive_reason||null, String(req.params.id), req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Billing item not found');
 
     // Also update visits.fee_paid to true if this is a consultation or mch service fee item
@@ -555,8 +611,17 @@ const waiveBillingItem = async (req, res) => {
       await pool.query(`
         UPDATE visits
         SET fee_paid = true, payment_method = 'waived', updated_at = NOW()
-        WHERE id = $1 AND pharmacy_id = $2
-      `, [result.rows[0].visit_id, req.pharmacy_id]);
+        WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
+      `, [String(result.rows[0].visit_id), req.pharmacy_id]);
+    }
+
+    try {
+      await pool.query(`
+        INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
+        VALUES ($1,$2,'waived','billing_items',$3,$4)
+      `, [req.pharmacy_id, waiverId, String(result.rows[0].id), JSON.stringify({ reason: waive_reason })]);
+    } catch (auditErr) {
+      logger.warn('Audit log write warning in waiveBillingItem: ' + auditErr.message);
     }
 
     return successResponse(res, 200, 'Item waived', result.rows[0]);
@@ -579,8 +644,8 @@ const markInsurance = async (req, res) => {
     const result = await pool.query(`
       UPDATE billing_items
       SET status=$1, payment_method=$1, insurance_provider=$2, member_number=$3, auth_code=$4, updated_at=NOW()
-      WHERE id=$5 AND facility_id=$6 RETURNING *
-    `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, req.params.id, req.pharmacy_id]);
+      WHERE id::text=$5::text AND ($6::text IS NULL OR facility_id::text=$6::text OR pharmacy_id::text=$6::text) RETURNING *
+    `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, String(req.params.id), req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Billing item not found');
 
     // Also update visits
@@ -589,8 +654,8 @@ const markInsurance = async (req, res) => {
         UPDATE visits
         SET fee_paid = true, payment_method = $1, insurance_provider = COALESCE($2, insurance_provider),
             member_number = COALESCE($3, member_number), auth_code = COALESCE($4, auth_code), updated_at = NOW()
-        WHERE id = $5 AND pharmacy_id = $6
-      `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, result.rows[0].visit_id, req.pharmacy_id]);
+        WHERE id::text = $5::text AND ($6::text IS NULL OR pharmacy_id::text = $6::text)
+      `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, String(result.rows[0].visit_id), req.pharmacy_id]);
     }
 
     return successResponse(res, 200, `Marked as ${coverage_type}`, result.rows[0]);

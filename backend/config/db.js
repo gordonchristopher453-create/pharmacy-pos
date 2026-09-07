@@ -641,9 +641,9 @@ async function runMigrationsAndSeed(p) {
         member_number VARCHAR(150),
         auth_code VARCHAR(150),
         copay_amount NUMERIC(10,2) DEFAULT 0,
-        collected_by INT,
+        collected_by VARCHAR(100),
         paid_at TIMESTAMPTZ,
-        waived_by INT,
+        waived_by VARCHAR(100),
         waive_reason TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -1177,7 +1177,7 @@ async function runMigrationsAndSeed(p) {
           id BIGSERIAL PRIMARY KEY,
           facility_id INT,
           pharmacy_id INT,
-          user_id INT,
+          user_id VARCHAR(100),
           action VARCHAR(100),
           table_name VARCHAR(100),
           record_id VARCHAR(100),
@@ -1185,6 +1185,7 @@ async function runMigrationsAndSeed(p) {
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
+      await p.query(`ALTER TABLE audit_logs ALTER COLUMN user_id TYPE VARCHAR(100) USING user_id::text`);
       await p.query(`ALTER TABLE audit_logs ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text`);
     } catch (auditLogsErr) {}
 
@@ -1319,13 +1320,20 @@ async function runMigrationsAndSeed(p) {
       { name: 'copay_amount', type: 'NUMERIC DEFAULT 0' },
       { name: 'paid_at', type: 'TIMESTAMPTZ' },
       { name: 'payment_method', type: 'VARCHAR(50)' },
-      { name: 'collected_by', type: 'VARCHAR(100)' }
+      { name: 'collected_by', type: 'VARCHAR(100)' },
+      { name: 'waived_by', type: 'VARCHAR(100)' }
     ];
     for (const col of billingColumns) {
       try {
         await p.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
       } catch (colErr) {}
     }
+    try {
+      await p.query(`ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100) USING collected_by::text`);
+    } catch (e) {}
+    try {
+      await p.query(`ALTER TABLE billing_items ALTER COLUMN waived_by TYPE VARCHAR(100) USING waived_by::text`);
+    } catch (e) {}
 
     // Ensure visits columns exist
     const visitColumns = [

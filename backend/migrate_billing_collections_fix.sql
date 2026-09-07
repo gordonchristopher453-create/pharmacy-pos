@@ -11,17 +11,43 @@ ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS member_number VARCHAR(150);
 ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150);
 ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS copay_amount NUMERIC(10,2) DEFAULT 0;
 
--- Ensure collected_by can hold both UUID and integer user IDs safely without type mismatches
+-- Ensure collected_by and waived_by can hold both UUID and integer user IDs safely without type mismatches
 DO $$ 
 BEGIN 
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='billing_items' AND column_name='collected_by') THEN
     BEGIN
-      ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100);
+      ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100) USING collected_by::text;
     EXCEPTION WHEN OTHERS THEN
       NULL;
     END;
   ELSE
     ALTER TABLE billing_items ADD COLUMN collected_by VARCHAR(100);
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='billing_items' AND column_name='waived_by') THEN
+    BEGIN
+      ALTER TABLE billing_items ALTER COLUMN waived_by TYPE VARCHAR(100) USING waived_by::text;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  ELSE
+    ALTER TABLE billing_items ADD COLUMN waived_by VARCHAR(100);
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='user_id') THEN
+    BEGIN
+      ALTER TABLE audit_logs ALTER COLUMN user_id TYPE VARCHAR(100) USING user_id::text;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='record_id') THEN
+    BEGIN
+      ALTER TABLE audit_logs ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
   END IF;
 END $$;
 

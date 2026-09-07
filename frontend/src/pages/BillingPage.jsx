@@ -222,7 +222,14 @@ export default function BillingPage() {
     setSaving(true);
     try {
       const vid = selectedVisit.visit_id || selectedVisit.id;
-      await api.post('/billing/visit/' + vid + '/pay', { ...payForm, item_ids: selectedBillItems });
+      const cleanAmount = payForm.amount ? String(payForm.amount).replace(/,/g, '').trim() : '';
+      const cleanCopay = payForm.copay_amount ? String(payForm.copay_amount).replace(/,/g, '').trim() : '';
+      await api.post('/billing/visit/' + vid + '/pay', { 
+        ...payForm, 
+        amount: cleanAmount,
+        copay_amount: cleanCopay,
+        item_ids: selectedBillItems 
+      });
       toast.success('Payment recorded successfully');
       setShowPayment(false);
       await openBill(selectedVisit);
