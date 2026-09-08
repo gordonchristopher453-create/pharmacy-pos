@@ -29,7 +29,7 @@ class VisitModel {
       SELECT v.*, v.created_at as visit_date, p.full_name as patient_name, p.patient_number, p.gender, p.date_of_birth,
              vt.blood_pressure_systolic, vt.blood_pressure_diastolic,
              vt.pulse_rate, vt.temperature, vt.oxygen_saturation, vt.weight,
-             p.phone as patient_phone, p.phone, u.full_name as created_by_name
+             p.phone as patient_phone, u.full_name as created_by_name
       FROM visits v
       LEFT JOIN patients p ON v.patient_id=p.id
       LEFT JOIN users u ON v.created_by=u.id
@@ -41,8 +41,8 @@ class VisitModel {
         ORDER BY recorded_at DESC
         LIMIT 1
       ) vt ON true
-      WHERE v.id::text=$1::text AND ($2::text IS NULL OR v.pharmacy_id::text=$2::text)
-    `, [String(id), pharmacy_id ? String(pharmacy_id) : null]);
+      WHERE v.id::text=$1::text AND v.pharmacy_id::text=$2::text
+    `, [id, pharmacy_id]);
     if (!result.rows[0]) return null;
     const visit = result.rows[0];
     const [serviceOrders, labOrders, prescriptions, vaccines, billing] = await Promise.all([
@@ -80,20 +80,17 @@ class VisitModel {
           AND bi.item_type IN ('consultation', 'mch')
           AND bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate', 'waived')
           AND v.fee_paid = false
-          AND ($1::text IS NULL OR v.pharmacy_id::text = $1::text)
-      `, [pharmacy_id ? String(pharmacy_id) : null]);
+          AND v.pharmacy_id::text = $1::text
+      `, [pharmacy_id]);
     } catch (syncErr) {
       console.error("Error auto-syncing visits fee_paid state:", syncErr.message);
     }
 
     let q = `
       SELECT v.*, v.created_at as visit_date, p.full_name as patient_name, p.patient_number, p.gender,
-             p.date_of_birth, p.phone, p.phone as patient_phone, p.blood_group,
-             p.allergies, p.chronic_conditions, p.sha_number, p.national_id, p.address, p.county,
              u.full_name as created_by_name,
-      (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status IN ('pending', 'partial')) as pending_bills,
-      (SELECT COALESCE(SUM(CASE WHEN status='pending' THEN total_price WHEN status='partial' THEN GREATEST(0, total_price - COALESCE(paid_amount,0)) ELSE 0 END),0) FROM billing_items WHERE visit_id=v.id) as pending_amount,
-      (SELECT COALESCE(SUM(total_price),0) FROM billing_items WHERE visit_id=v.id) as total_bill
+             (SELECT COUNT(*) FROM billing_items WHERE visit_id=v.id AND status='pending') as pending_bills,
+             (SELECT COALESCE(SUM(total_price),0) FROM billing_items WHERE visit_id=v.id) as total_bill
       FROM visits v
       LEFT JOIN patients p ON v.patient_id=p.id
       LEFT JOIN users u ON v.created_by=u.id
@@ -105,9 +102,9 @@ class VisitModel {
         ORDER BY recorded_at DESC
         LIMIT 1
       ) vt ON true
-      WHERE ($1::text IS NULL OR v.pharmacy_id::text=$1::text)
+      WHERE v.pharmacy_id::text=$1::text
     `;
-    const params = [pharmacy_id ? String(pharmacy_id) : null];
+    const params = [pharmacy_id];
 
     if (patient_id) { params.push(patient_id); q += ` AND v.patient_id=$${params.length}`; }
 
@@ -151,14 +148,7 @@ class VisitModel {
     params.push(limit);  q += ` LIMIT $${params.length}`;
     params.push(offset); q += ` OFFSET $${params.length}`;
     const result = await pool.query(q, params);
-    const { decrypt } = require('../utils/encryption');
-    return result.rows.map(r => ({
-      ...r,
-      allergies: decrypt(r.allergies),
-      chronic_conditions: decrypt(r.chronic_conditions),
-      sha_number: decrypt(r.sha_number),
-      national_id: decrypt(r.national_id)
-    }));
+    return result.rows;
   }
 
   static async getDailyStats(pharmacy_id, date) {
@@ -201,7 +191,7 @@ class VisitModel {
 
       // 3. Pending Unpaid Billing Items
       const pendingBills = await pool.query(
-        `SELECT COUNT(*)::int as cnt FROM billing_items WHERE visit_id::text=$1::text AND LOWER(status) IN ('pending', 'unpaid')`,
+        `SELECT COUNT(*)::int as cnt FROM billing_items WHERE visit_id=$1 AND LOWER(status) IN ('pending', 'unpaid') AND payment_status != 'PAID'`,
         [visitId]
       );
       if (pendingBills.rows[0]?.cnt > 0) {

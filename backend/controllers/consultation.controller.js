@@ -254,207 +254,60 @@ const update = async (req, res) => {
 // ── PHARMACY QUEUE ────────────────────────────────────────────────────────────
 const getPharmacyQueue = async (req, res) => {
   try {
-    const { search, date_from, date_to, all_dates, include_inpatient } = req.query;
-    const pharmacyId = req.pharmacy_id || req.user?.pharmacy_id || null;
-    const params = [pharmacyId];
+    const { search, date_from, date_to, all_dates } = req.query;
+    const params = [req.pharmacy_id];
     let extraClauses = '';
 
-    if (search && search.trim()) {
-      params.push(`%${search.trim()}%`);
+    if (search) {
+      params.push(`%${search}%`);
       extraClauses += ` AND (pat.full_name ILIKE $${params.length} OR pat.patient_number ILIKE $${params.length})`;
     }
 
     if (date_from && date_to) {
       params.push(date_from);
       params.push(date_to);
-      extraClauses += ` AND (
-        (v.created_at::date >= $${params.length - 1}::date AND v.created_at::date <= $${params.length}::date)
-        OR (vp.latest_prescription_at::date >= $${params.length - 1}::date AND vp.latest_prescription_at::date <= $${params.length}::date)
-        OR ((v.created_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (v.created_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
-        OR ((vp.latest_prescription_at AT TIME ZONE 'UTC')::date >= $${params.length - 1}::date AND (vp.latest_prescription_at AT TIME ZONE 'UTC')::date <= $${params.length}::date)
-        OR EXISTS (
-          SELECT 1 FROM prescriptions pr_pend 
-          WHERE pr_pend.visit_id::text = v.id::text 
-            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
-        )
-      )`;
+      extraClauses += ` AND ((v.created_at::date >= $${params.length - 1}::date AND v.created_at::date <= $${params.length}::date) OR (pr.created_at::date >= $${params.length - 1}::date AND pr.created_at::date <= $${params.length}::date) OR pr.status = 'pending')`;
     } else if (date_from) {
       params.push(date_from);
-      extraClauses += ` AND (
-        v.created_at::date = $${params.length}::date 
-        OR vp.latest_prescription_at::date = $${params.length}::date
-        OR (v.created_at AT TIME ZONE 'UTC')::date = $${params.length}::date
-        OR (vp.latest_prescription_at AT TIME ZONE 'UTC')::date = $${params.length}::date
-        OR EXISTS (
-          SELECT 1 FROM prescriptions pr_pend 
-          WHERE pr_pend.visit_id::text = v.id::text 
-            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
-        )
-      )`;
+      extraClauses += ` AND (v.created_at::date = $${params.length}::date OR pr.created_at::date = $${params.length}::date OR pr.status = 'pending')`;
     } else if (all_dates !== 'true') {
-      extraClauses += ` AND (
-        v.created_at::date = CURRENT_DATE 
-        OR vp.latest_prescription_at::date = CURRENT_DATE 
-        OR (v.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE 
-        OR EXISTS (
-          SELECT 1 FROM prescriptions pr_pend 
-          WHERE pr_pend.visit_id::text = v.id::text 
-            AND (LOWER(COALESCE(pr_pend.status, 'pending')) = 'pending' OR pr_pend.status IS NULL)
-        )
-      )`;
+      extraClauses += ` AND (v.created_at::date = CURRENT_DATE OR pr.created_at::date = CURRENT_DATE OR pr.status = 'pending')`;
     }
 
-    if (include_inpatient !== 'true') {
-      extraClauses += ` AND (
-        v.status != 'inpatient' 
-        AND LOWER(COALESCE(v.visit_type, '')) != 'inpatient'
-        AND NOT EXISTS (SELECT 1 FROM inpatient_admissions ia_ex WHERE ia_ex.visit_id::text = v.id::text AND ia_ex.status = 'admitted')
-        AND NOT EXISTS (SELECT 1 FROM beds b_ex WHERE b_ex.current_visit_id::text = v.id::text AND b_ex.status = 'occupied')
-      )`;
-    }
-
-    const query = `
-      WITH visit_prescriptions AS (
-        SELECT 
-          pr.visit_id::text AS visit_id,
-          MAX(pr.created_at) AS latest_prescription_at,
-          json_agg(jsonb_build_object(
-            'id', pr.id,
-            'drug_name', pr.drug_name,
-            'dosage', COALESCE(pr.dosage, ''),
-            'frequency', COALESCE(pr.frequency, ''),
-            'duration', COALESCE(pr.duration, ''),
-            'route', COALESCE(pr.route, 'oral'),
-            'quantity', COALESCE(pr.quantity, 1),
-            'instructions', COALESCE(pr.instructions, ''),
-            'status', COALESCE(pr.status, 'pending'),
-            'product_id', pr.product_id,
-            'price', COALESCE(pr.price, 0),
-            'selling_price', COALESCE(pr.price, 0)
-          )) FILTER (WHERE pr.id IS NOT NULL) AS prescriptions
-        FROM prescriptions pr
-        WHERE ($1::text IS NULL OR pr.pharmacy_id::text = $1::text OR pr.pharmacy_id IS NULL)
-          AND (LOWER(COALESCE(pr.status, 'pending')) = 'pending' OR pr.status IS NULL)
-        GROUP BY pr.visit_id::text
-      )
-      SELECT 
-        v.id,
-        v.visit_number,
-        v.patient_id,
-        v.pharmacy_id,
-        v.status,
-        v.priority,
-        v.visit_type,
-        v.payment_mode,
-        v.created_at,
-        v.updated_at,
-        pat.full_name AS patient_name,
-        pat.patient_number,
-        COALESCE(pat.allergies, '') AS allergies,
-        pat.blood_group,
-        pat.gender,
-        pat.date_of_birth,
-        c.diagnosis,
-        c.management_plan,
-        c.id AS consultation_id,
+    const result = await pool.query(`
+      SELECT v.*,
+        pat.full_name AS patient_name, pat.patient_number, pat.allergies,
+        pat.blood_group, pat.gender, pat.date_of_birth,
+        c.diagnosis, c.management_plan, c.id AS consultation_id,
         u.full_name AS doctor_name,
-        w.name AS ward_name,
-        b.bed_number,
-        (
-          EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
-          OR EXISTS(SELECT 1 FROM beds b2 WHERE b2.current_visit_id::text = v.id::text AND b2.status = 'occupied')
-          OR v.status = 'inpatient' 
-          OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
-        ) AS is_inpatient,
-        (
-          SELECT COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status = 'pending'), 0) = 0 
-          FROM billing_items bi 
-          WHERE bi.visit_id::text = v.id::text
-        ) AS paid,
-        vp.prescriptions
-      FROM visit_prescriptions vp
-      JOIN visits v ON v.id::text = vp.visit_id
-      LEFT JOIN patients pat ON pat.id::text = v.patient_id::text
-      LEFT JOIN LATERAL (
-        SELECT c2.id, c2.diagnosis, c2.management_plan, c2.doctor_id, c2.created_at 
-        FROM consultations c2 
-        WHERE c2.visit_id::text = v.id::text AND ($1::text IS NULL OR c2.pharmacy_id::text = $1::text OR c2.pharmacy_id IS NULL) 
-        ORDER BY c2.created_at DESC LIMIT 1
-      ) c ON true
-      LEFT JOIN users u ON u.id::text = c.doctor_id::text
-      LEFT JOIN LATERAL (
-        SELECT ia2.bed_id 
-        FROM inpatient_admissions ia2 
-        WHERE ia2.visit_id::text = v.id::text AND ia2.status = 'admitted' 
-        ORDER BY ia2.created_at DESC LIMIT 1
-      ) ia ON true
-      LEFT JOIN LATERAL (
-        SELECT b2.bed_number, b2.ward_id 
-        FROM beds b2 
-        WHERE (b2.current_visit_id::text = v.id::text AND b2.status = 'occupied') 
-           OR (ia.bed_id::text = b2.id::text) 
-        LIMIT 1
-      ) b ON true
-      LEFT JOIN wards w ON w.id::text = b.ward_id::text
-      WHERE ($1::text IS NULL OR v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL)
+        w.name AS ward_name, b.bed_number,
+        (EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
+         OR EXISTS(SELECT 1 FROM beds b WHERE b.current_visit_id::text = v.id::text AND b.status = 'occupied')
+         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient') AS is_inpatient,
+        (SELECT COALESCE(SUM(total_price) FILTER (WHERE status = 'pending'), 0) = 0 FROM billing_items WHERE visit_id::text = v.id::text) AS paid,
+        json_agg(DISTINCT jsonb_build_object(
+          'id',pr.id,'drug_name',pr.drug_name,'dosage',pr.dosage,
+          'frequency',pr.frequency,'duration',pr.duration,
+          'route',pr.route,'quantity',pr.quantity,'status',pr.status,
+          'product_id',pr.product_id,'price',pr.price,'selling_price',pr.price
+        )) FILTER (WHERE pr.id IS NOT NULL AND (pr.status = 'pending' OR pr.status IS NULL)) AS prescriptions
+      FROM visits v
+      JOIN patients pat ON v.patient_id::text = pat.id::text
+      LEFT JOIN consultations c ON v.id::text = c.visit_id::text AND (c.pharmacy_id::text = $1::text OR c.pharmacy_id IS NULL)
+      LEFT JOIN users u ON c.doctor_id::text = u.id::text
+      LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
+      LEFT JOIN wards w ON b.ward_id = w.id
+      JOIN prescriptions pr ON v.id::text = pr.visit_id::text AND (pr.status = 'pending' OR pr.status IS NULL)
+      WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL)
         ${extraClauses}
-      ORDER BY 
-        CASE v.priority WHEN 'emergency' THEN 1 WHEN 'urgent' THEN 2 ELSE 3 END,
-        COALESCE(vp.latest_prescription_at, c.created_at, v.created_at) DESC
-      LIMIT 200
-    `;
-
-    try {
-      const result = await pool.query(query, params);
-      return successResponse(res, 200, 'Pharmacy queue fetched', result.rows || []);
-    } catch (dbErr) {
-      logger.warn('Primary pharmacy queue query failed, falling back to simple queue: ' + dbErr.message);
-      // Fallback query that guarantees returning pending prescriptions even if advanced joins fail
-      const fallbackResult = await pool.query(`
-        SELECT 
-          v.id,
-          v.visit_number,
-          v.patient_id,
-          v.pharmacy_id,
-          v.status,
-          v.priority,
-          v.visit_type,
-          v.payment_mode,
-          v.created_at,
-          v.updated_at,
-          pat.full_name AS patient_name,
-          pat.patient_number,
-          COALESCE(pat.allergies, '') AS allergies,
-          pat.blood_group,
-          pat.gender,
-          pat.date_of_birth,
-          json_agg(jsonb_build_object(
-            'id', pr.id,
-            'drug_name', pr.drug_name,
-            'dosage', COALESCE(pr.dosage, ''),
-            'frequency', COALESCE(pr.frequency, ''),
-            'duration', COALESCE(pr.duration, ''),
-            'route', COALESCE(pr.route, 'oral'),
-            'quantity', COALESCE(pr.quantity, 1),
-            'instructions', COALESCE(pr.instructions, ''),
-            'status', COALESCE(pr.status, 'pending'),
-            'product_id', pr.product_id,
-            'price', COALESCE(pr.price, 0),
-            'selling_price', COALESCE(pr.price, 0)
-          )) FILTER (WHERE pr.id IS NOT NULL) AS prescriptions
-        FROM visits v
-        JOIN prescriptions pr ON pr.visit_id::text = v.id::text
-        LEFT JOIN patients pat ON pat.id::text = v.patient_id::text
-        WHERE (LOWER(COALESCE(pr.status, 'pending')) = 'pending' OR pr.status IS NULL)
-        GROUP BY v.id, pat.id
-        ORDER BY v.created_at DESC
-        LIMIT 200
-      `);
-      return successResponse(res, 200, 'Pharmacy queue fetched (fallback)', fallbackResult.rows || []);
-    }
+      GROUP BY v.id, pat.id, c.id, u.full_name, w.name, b.bed_number
+      ORDER BY CASE v.priority WHEN 'emergency' THEN 1 WHEN 'urgent' THEN 2 ELSE 3 END, COALESCE(MAX(pr.created_at), MAX(c.created_at), v.created_at) DESC
+    `, params);
+    return successResponse(res, 200, 'Pharmacy queue fetched', result.rows);
   } catch (e) {
-    logger.error('Get pharmacy queue fatal error:', e.message);
-    return successResponse(res, 200, 'Pharmacy queue empty on error', []);
+    logger.error('Get pharmacy queue error:', e.message);
+    return errorResponse(res, 500, 'Failed to fetch pharmacy queue');
   }
 };
 
@@ -464,8 +317,8 @@ const getLabResults = async (req, res) => {
     const result = await pool.query(`
       SELECT l.*, u.full_name AS technician_name
       FROM lab_requests l
-      LEFT JOIN users u ON l.resulted_by::text = u.id::text
-      WHERE l.visit_id::text=$1::text AND (l.pharmacy_id::text=$2::text OR l.pharmacy_id IS NULL)
+      LEFT JOIN users u ON l.resulted_by = u.id
+      WHERE l.visit_id=$1 AND l.pharmacy_id=$2
       ORDER BY l.created_at DESC
     `, [req.params.visit_id, req.pharmacy_id]);
     return successResponse(res, 200, 'Lab results fetched', result.rows);

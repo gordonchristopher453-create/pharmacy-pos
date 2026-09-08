@@ -92,8 +92,6 @@ const getOrders = async (req, res) => {
       department,
       priority,
       search,
-      date_from,
-      date_to,
       limit = 50,
       offset = 0
     } = req.query;
@@ -142,14 +140,6 @@ const getOrders = async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       query += ` AND (o.order_number ILIKE $${params.length} OR p.full_name ILIKE $${params.length} OR p.patient_number ILIKE $${params.length})`;
-    }
-    if (date_from) {
-      params.push(date_from);
-      query += ` AND DATE(o.created_at) >= $${params.length}`;
-    }
-    if (date_to) {
-      params.push(date_to);
-      query += ` AND DATE(o.created_at) <= $${params.length}`;
     }
 
     query += ` ORDER BY o.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;

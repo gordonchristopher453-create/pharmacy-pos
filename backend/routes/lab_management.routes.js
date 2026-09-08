@@ -323,33 +323,29 @@ router.use(protect, requirePharmacy);
 // ── MOH LAB REPORTS (must be before /:id) ────────────────────────────────────
 
 const ensureReportsTable = async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS lab_reports (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id TEXT,
-        patient_name VARCHAR(255) NOT NULL,
-        patient_number VARCHAR(100),
-        age VARCHAR(20),
-        gender VARCHAR(20),
-        test_name VARCHAR(255) NOT NULL,
-        test_category VARCHAR(100),
-        result TEXT NOT NULL,
-        result_value VARCHAR(100),
-        result_unit VARCHAR(50),
-        reference_range VARCHAR(100),
-        result_flag VARCHAR(20) DEFAULT 'normal',
-        report_date DATE NOT NULL DEFAULT CURRENT_DATE,
-        reported_by VARCHAR(255),
-        notes TEXT,
-        created_by TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-  } catch (err) {
-    console.error('ensureReportsTable error:', err.message);
-  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lab_reports (
+      id SERIAL PRIMARY KEY,
+      pharmacy_id INTEGER NOT NULL,
+      patient_name VARCHAR(255) NOT NULL,
+      patient_number VARCHAR(100),
+      age VARCHAR(20),
+      gender VARCHAR(20),
+      test_name VARCHAR(255) NOT NULL,
+      test_category VARCHAR(100),
+      result TEXT NOT NULL,
+      result_value VARCHAR(100),
+      result_unit VARCHAR(50),
+      reference_range VARCHAR(100),
+      result_flag VARCHAR(20) DEFAULT 'normal',
+      report_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      reported_by VARCHAR(255),
+      notes TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
 };
 
 router.get('/reports/all', async (req, res) => {
@@ -357,89 +353,25 @@ router.get('/reports/all', async (req, res) => {
     await ensureReportsTable();
     const { search, start_date, end_date, flag } = req.query;
     const today = new Date().toISOString().split('T')[0];
-    const from = start_date || '2020-01-01';
+    const from = start_date || today;
     const to = end_date || today;
 
-    const baseQuery = `
-      SELECT 
-        lr.id::text as id,
-        COALESCE(lr.pharmacy_id::text, $1::text) as pharmacy_id,
-        p.full_name as patient_name,
-        p.patient_number,
-        COALESCE(
-          NULLIF(TRIM(EXTRACT(YEAR FROM AGE(p.date_of_birth))::text), ''),
-          '—'
-        ) as age,
-        COALESCE(p.gender, '—') as gender,
-        lr.test_name,
-        COALESCE(lr.test_category, 'General') as test_category,
-        COALESCE(lr.result, lr.result_value, 'Completed') as result,
-        lr.result_value,
-        lr.result_unit,
-        lr.reference_range,
-        COALESCE(lr.result_flag, 'normal') as result_flag,
-        DATE(COALESCE(lr.resulted_at, lr.created_at)) as report_date,
-        COALESCE(u.full_name, 'Lab Technician') as reported_by,
-        COALESCE(lr.technician_notes, lr.notes) as notes,
-        lr.resulted_by::text as created_by,
-        COALESCE(lr.resulted_at, lr.created_at) as created_at,
-        lr.updated_at
-      FROM lab_requests lr
-      JOIN patients p ON lr.patient_id::text = p.id::text
-      LEFT JOIN users u ON lr.resulted_by::text = u.id::text
-      WHERE (lr.pharmacy_id::text = $1::text OR lr.pharmacy_id IS NULL)
-        AND LOWER(COALESCE(lr.status, '')) = 'completed'
-        AND DATE(COALESCE(lr.resulted_at, lr.created_at)) BETWEEN $2 AND $3
-
-      UNION ALL
-
-      SELECT 
-        lrep.id::text as id,
-        lrep.pharmacy_id::text as pharmacy_id,
-        lrep.patient_name,
-        lrep.patient_number,
-        lrep.age,
-        lrep.gender,
-        lrep.test_name,
-        lrep.test_category,
-        lrep.result,
-        lrep.result_value,
-        lrep.result_unit,
-        lrep.reference_range,
-        lrep.result_flag,
-        lrep.report_date,
-        lrep.reported_by,
-        lrep.notes,
-        lrep.created_by::text as created_by,
-        lrep.created_at,
-        lrep.updated_at
-      FROM lab_reports lrep
-      WHERE (lrep.pharmacy_id::text = $1::text OR lrep.pharmacy_id IS NULL)
-        AND lrep.report_date BETWEEN $2 AND $3
-    `;
-
+    let query = `SELECT * FROM lab_reports WHERE pharmacy_id=$1 AND report_date BETWEEN $2 AND $3`;
     const params = [req.pharmacy_id, from, to];
     let idx = 4;
-    let whereClauses = [];
 
     if (search) {
-      whereClauses.push(`(patient_name ILIKE $${idx} OR patient_number ILIKE $${idx} OR test_name ILIKE $${idx} OR reported_by ILIKE $${idx})`);
-      params.push(`%${search}%`);
-      idx++;
+      query += ` AND (patient_name ILIKE $${idx} OR patient_number ILIKE $${idx} OR test_name ILIKE $${idx})`;
+      params.push(`%${search}%`); idx++;
     }
-    if (flag) {
-      whereClauses.push(`LOWER(result_flag) = LOWER($${idx++})`);
-      params.push(flag);
-    }
+    if (flag) { query += ` AND result_flag=$${idx++}`; params.push(flag); }
 
-    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const finalQuery = `SELECT * FROM (${baseQuery}) q ${whereStr} ORDER BY created_at DESC`;
-
-    const result = await pool.query(finalQuery, params);
+    query += ` ORDER BY created_at DESC`;
+    const result = await pool.query(query, params);
     return successResponse(res, 200, 'Reports fetched', result.rows);
   } catch (error) {
     console.error('Reports fetch error:', error.message);
-    return errorResponse(res, 500, 'Failed to fetch reports: ' + error.message);
+    return errorResponse(res, 500, 'Failed to fetch reports');
   }
 });
 
@@ -462,7 +394,7 @@ router.post('/reports', async (req, res) => {
         (pharmacy_id, patient_name, patient_number, age, gender,
          test_name, test_category, result, result_value, result_unit,
          reference_range, result_flag, report_date, reported_by, notes, created_by)
-      VALUES ($1::text,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::text)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING *
     `, [
       req.pharmacy_id, patient_name, patient_number||null, age||null, gender||null,
@@ -475,13 +407,13 @@ router.post('/reports', async (req, res) => {
     return successResponse(res, 201, 'Report saved', ins.rows[0]);
   } catch (error) {
     console.error('Report save error:', error.message);
-    return errorResponse(res, 500, 'Failed to save report: ' + error.message);
+    return errorResponse(res, 500, 'Failed to save report');
   }
 });
 
 router.delete('/reports/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM lab_reports WHERE id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL)`, [req.params.id, req.pharmacy_id]);
+    await pool.query(`DELETE FROM lab_reports WHERE id=$1 AND pharmacy_id=$2`, [req.params.id, req.pharmacy_id]);
     return successResponse(res, 200, 'Report deleted');
   } catch (error) {
     return errorResponse(res, 500, 'Failed to delete report');
@@ -593,7 +525,7 @@ router.get('/', async (req, res) => {
     }
 
     params.push(parseInt(limit));
-    query += ` ORDER BY lr.created_at DESC, lr.id DESC LIMIT $${params.length}`;
+    query += ` ORDER BY CASE lr.urgency WHEN 'emergency' THEN 1 WHEN 'urgent' THEN 2 ELSE 3 END, lr.created_at DESC LIMIT $${params.length}`;
 
     const result = await pool.query(query, params);
 
@@ -650,10 +582,9 @@ router.get('/visit/:visit_id', async (req, res) => {
   }
 });
 
-// MOH 706 - Auto-generate monthly/weekly lab summary with LOINC normalization
+// MOH 706 - Auto-generate monthly/weekly lab summary
 router.get('/moh706', async (req, res) => {
   try {
-    await ensureReportsTable();
     const { month, year, week_start, week_end } = req.query;
     let start, end;
     if (week_start && week_end) {
@@ -665,383 +596,40 @@ router.get('/moh706', async (req, res) => {
       start = `${y}-${String(m).padStart(2,'0')}-01`;
       end = new Date(y, m, 0).toISOString().split('T')[0];
     }
-
-    const query = `
-      SELECT 
-        lr.id::text,
-        lr.test_name,
-        lr.test_code,
-        lr.status,
-        lr.result,
-        lr.result_value,
-        lr.result_flag,
-        lr.resulted_at,
-        lr.created_at,
-        p.date_of_birth,
-        p.gender,
-        EXTRACT(YEAR FROM AGE(COALESCE(lr.created_at, NOW()), p.date_of_birth)) as calculated_age
-      FROM lab_requests lr
-      LEFT JOIN patients p ON lr.patient_id::text = p.id::text
-      WHERE (lr.pharmacy_id::text = $1::text OR lr.pharmacy_id IS NULL)
-        AND DATE(COALESCE(lr.resulted_at, lr.created_at)) BETWEEN $2 AND $3
-
-      UNION ALL
-
-      SELECT
-        lrep.id::text,
-        lrep.test_name,
-        NULL as test_code,
-        'completed' as status,
-        lrep.result,
-        lrep.result_value,
-        lrep.result_flag,
-        lrep.report_date::timestamp as resulted_at,
-        lrep.created_at,
-        NULL as date_of_birth,
-        lrep.gender,
-        CAST(NULLIF(regexp_replace(lrep.age, '[^0-9]', '', 'g'), '') AS NUMERIC) as calculated_age
-      FROM lab_reports lrep
-      WHERE (lrep.pharmacy_id::text = $1::text OR lrep.pharmacy_id IS NULL)
-        AND lrep.report_date BETWEEN $2 AND $3
-    `;
-
-    const result = await pool.query(query, [req.pharmacy_id, start, end]);
+    const result = await pool.query(
+      `SELECT test_name, test_code, status, result_flag, result_value FROM lab_requests WHERE pharmacy_id = $1 AND DATE(created_at) BETWEEN $2 AND $3`,
+      [req.pharmacy_id, start, end]
+    );
     const rows = result.rows;
     const total = rows.length;
-
-    const isCompleted = (r) => {
-      const s = (r.status || '').toLowerCase();
-      return s === 'completed' || !!r.result_value || !!r.result || !!r.resulted_at;
-    };
-
-    const isPositiveFlag = (r) => {
-      const flag = (r.result_flag || '').toLowerCase();
-      const val = String(r.result_value || r.result || '').toLowerCase();
-      return ['high', 'low', 'critical', 'positive', 'reactive', 'abnormal', 'detected', 'pos', 'abn', 'reactive'].includes(flag)
-        || val.includes('positive') || val.includes('reactive') || val.includes('detected')
-        || val.includes('1:80') || val.includes('1:160') || val.includes('1:320')
-        || val.includes('+1') || val.includes('+2') || val.includes('+3') || val.includes('+4')
-        || flag.includes('high') || flag.includes('abn');
-    };
-
-    const isLowFlag = (r) => {
-      const flag = (r.result_flag || '').toLowerCase();
-      const val = String(r.result_value || r.result || '').toLowerCase();
-      return flag === 'low' || flag.includes('low') || val.includes('low');
-    };
-
-    const isHighFlag = (r) => {
-      const flag = (r.result_flag || '').toLowerCase();
-      const val = String(r.result_value || r.result || '').toLowerCase();
-      return flag === 'high' || flag === 'critical' || flag.includes('high') || val.includes('high');
-    };
-
-    const completed = rows.filter(r => isCompleted(r)).length;
-    const pending = rows.filter(r => (r.status || '').toLowerCase() === 'pending' && !isCompleted(r)).length;
-    const processing = rows.filter(r => (r.status || '').toLowerCase() === 'processing' && !isCompleted(r)).length;
-
-    // LOINC / Clinical Department Category Mapping
-    const categorize = (testName, testCode) => {
-      const n = `${testName || ''} ${testCode || ''}`.toLowerCase();
-      if (/haemogram|hemogram|cbc|blood count|haematology|fbc|wbc|rbc|platelet|hgb|hct|esr|diff|blood film|peripheral|58410-2|57021-8|718-7|6690-2|883-9|882-1|30341-2|3173-2|8123-2/.test(n)) return 'haematology';
-      if (/malaria|parasite|widal|brucella|stool|ova|cyst|giardia|amoeba|helminth|bs for mps|mps|rdt|taenia|hookworm|ascaris|mansoni|bilharzia|89574-8|58900-2|32729-6|74850-9|50549-5|10701-1|42254-3|22295-0/.test(n)) return 'parasitology';
-      if (/urine|urinalysis|protein in urine|glucose in urine|ketones|urobilinogen|leukocyte|24356-8|50556-0|5804-0/.test(n)) return 'urinalysis';
-      if (/culture|sensitivity|swab|sputum|csf|bacteria|gram|afb|tb |tuberculosis|gene xpert|genexpert|11475-1|89371-9/.test(n)) return 'bacteriology';
-      if (/glucose|sugar|rbs|fbs|creatinine|urea|uecs|electrolyte|sodium|potassium|chloride|bicarbonate|cholesterol|lipid|triglyceride|hdl|ldl|lft|liver|bilirubin|alt|ast|alp|albumin|protein|hba1c|ferritin|crp|procalcitonin|d-dimer|troponin|psa|prolactin|fsh|lh|cortisol|insulin|tsh|thyroid|t3|t4|uric acid|2345-7|2339-0|1558-6|24362-6|2160-0|3094-0|24325-3|24331-1|24348-5|3016-3|4548-4/.test(n)) return 'chemistry';
-      if (/hiv|hepatitis|hbsag|hcv|vdrl|syphilis|rpr|tpha|rheumatoid|rf|aso|antistreptolysin|dengue|covid|influenza|strep|h\.pylori|h pylori|helicobacter|toxoplasma|pregnancy|upt|bhcg|beta-hcg|blood group|abo|crossmatch|coombs|29893-5|68961-2|20507-0|5292-8|5196-1|13955-0|2106-3|19080-1|29532-9|49540-8|11572-5/.test(n)) return 'serology';
+    const completed = rows.filter(r => r.status === 'Completed').length;
+    const pending = rows.filter(r => r.status === 'Pending').length;
+    const processing = rows.filter(r => r.status === 'processing').length;
+    const categorize = (name) => {
+      const n = (name || '').toLowerCase();
+      if (/haemogram|hemogram|cbc|blood count|haematology|wbc|rbc|platelet|hgb|hct/.test(n)) return 'haematology';
+      if (/malaria|parasite|widal|brucella|stool|ova|cyst|giardia|amoeba|helminth/.test(n)) return 'parasitology';
+      if (/urine|urinalysis/.test(n)) return 'urinalysis';
+      if (/culture|sensitivity|swab|sputum|csf|bacteria|gram|afb|tb |tuberculosis/.test(n)) return 'bacteriology';
+      if (/glucose|sugar|creatinine|urea|uecs|electrolyte|sodium|potassium|cholesterol|lipid|triglyceride|lft|liver|bilirubin|alt|ast|alp|albumin|protein|hba1c|ferritin|crp|esr|procalcitonin|d-dimer|troponin|psa|prolactin|fsh|lh|cortisol|insulin|tsh|thyroid|t3|t4/.test(n)) return 'chemistry';
+      if (/hiv|hepatitis|vdrl|syphilis|rpr|rheumatoid|aso|antistreptolysin|dengue|covid|influenza|strep|h.pylori|helicobacter|toxoplasma|pregnancy|bhcg|beta-hcg/.test(n)) return 'serology';
       if (/pap|smear|tissue|biopsy|histology|cytology|fnac/.test(n)) return 'histology';
       return 'other';
     };
-
     const cats = { haematology:[], parasitology:[], urinalysis:[], bacteriology:[], chemistry:[], serology:[], histology:[], other:[] };
-    rows.forEach(r => { const cat = categorize(r.test_name, r.test_code); cats[cat].push(r); });
-
+    rows.forEach(r => { const cat = categorize(r.test_name); cats[cat].push(r); });
     const summary = {};
     for (const [cat, items] of Object.entries(cats)) {
-      summary[cat] = {
-        total: items.length,
-        completed: items.filter(i => isCompleted(i)).length,
-        positive: items.filter(i => isPositiveFlag(i)).length,
-        pending: items.filter(i => (i.status || '').toLowerCase() === 'pending' && !isCompleted(i)).length,
-        processing: items.filter(i => (i.status || '').toLowerCase() === 'processing' && !isCompleted(i)).length
-      };
+      summary[cat] = { total: items.length, completed: items.filter(i => i.status === 'Completed').length, positive: items.filter(i => ['high','critical'].includes(i.result_flag)).length, pending: items.filter(i => i.status === 'Pending').length };
     }
-
-    // Granular MOH 706 Line-Item Classifier
-    const lineItemCounters = {
-      // 1. Urine Analysis
-      u_chem_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_glucose: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_ketones: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_proteins: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_micro_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_pus_cells: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_haematobium: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_tvaginalis: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_yeast: { total: 0, completed: 0, positive: 0, negative: 0 },
-      u_bacteria: { total: 0, completed: 0, positive: 0, negative: 0 },
-
-      // 2. Blood Chemistry
-      blood_sugar: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      ogtt: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      uecs_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-      creatinine: { total: 0, completed: 0, positive: 0, negative: 0 },
-      urea: { total: 0, completed: 0, positive: 0, negative: 0 },
-      sodium: { total: 0, completed: 0, positive: 0, negative: 0 },
-      potassium: { total: 0, completed: 0, positive: 0, negative: 0 },
-      chlorides: { total: 0, completed: 0, positive: 0, negative: 0 },
-      lft_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-      direct_bilirubin: { total: 0, completed: 0, positive: 0, negative: 0 },
-      total_bilirubin: { total: 0, completed: 0, positive: 0, negative: 0 },
-      ast_sgot: { total: 0, completed: 0, positive: 0, negative: 0 },
-      alt_sgpt: { total: 0, completed: 0, positive: 0, negative: 0 },
-      serum_protein: { total: 0, completed: 0, positive: 0, negative: 0 },
-      albumin: { total: 0, completed: 0, positive: 0, negative: 0 },
-      alp: { total: 0, completed: 0, positive: 0, negative: 0 },
-      lipid_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-      cholesterol: { total: 0, completed: 0, positive: 0, negative: 0 },
-      triglycerides: { total: 0, completed: 0, positive: 0, negative: 0 },
-      ldl: { total: 0, completed: 0, positive: 0, negative: 0 },
-      t3: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      t4: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      tsh: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      psa: { total: 0, completed: 0, positive: 0, negative: 0 },
-      ca15_3: { total: 0, completed: 0, positive: 0, negative: 0 },
-      ca19_9: { total: 0, completed: 0, positive: 0, negative: 0 },
-      ca125: { total: 0, completed: 0, positive: 0, negative: 0 },
-      cea: { total: 0, completed: 0, positive: 0, negative: 0 },
-      afp: { total: 0, completed: 0, positive: 0, negative: 0 },
-      csf_proteins: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      csf_glucose: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-
-      // 3. Parasitology & Malaria
-      malaria_bs_u5: { total: 0, completed: 0, positive: 0, negative: 0 },
-      malaria_bs_o5: { total: 0, completed: 0, positive: 0, negative: 0 },
-      malaria_rdt_u5: { total: 0, completed: 0, positive: 0, negative: 0 },
-      malaria_rdt_o5: { total: 0, completed: 0, positive: 0, negative: 0 },
-      taenia: { total: 0, completed: 0, positive: 0, negative: 0 },
-      h_nana: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hookworm: { total: 0, completed: 0, positive: 0, negative: 0 },
-      roundworms: { total: 0, completed: 0, positive: 0, negative: 0 },
-      s_mansoni: { total: 0, completed: 0, positive: 0, negative: 0 },
-      trichuris: { total: 0, completed: 0, positive: 0, negative: 0 },
-      amoeba: { total: 0, completed: 0, positive: 0, negative: 0 },
-      stool_total: { total: 0, completed: 0, positive: 0, negative: 0 },
-
-      // 4. Haematology
-      cbc_fbc: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      hb_est: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      hba1c: { total: 0, completed: 0, low: 0, high: 0, positive: 0, negative: 0 },
-      cd4: { total: 0, completed: 0, positive: 0, negative: 0 },
-      sickling: { total: 0, completed: 0, positive: 0, negative: 0 },
-      pbf: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bma: { total: 0, completed: 0, positive: 0, negative: 0 },
-      coag: { total: 0, completed: 0, positive: 0, negative: 0 },
-      retic: { total: 0, completed: 0, positive: 0, negative: 0 },
-      esr: { total: 0, completed: 0, positive: 0, negative: 0 },
-      blood_group: { total: 0, completed: 0, positive: 0, negative: 0 },
-      blood_units_grouped: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hiv_screening: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hep_b_screening: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hep_c_screening: { total: 0, completed: 0, positive: 0, negative: 0 },
-      syphilis_screening: { total: 0, completed: 0, positive: 0, negative: 0 },
-
-      // 5. Bacteriology & TB
-      bac_urine: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_pus: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_hvs: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_throat: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_rectal: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_blood: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_water: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_food: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_urethral: { total: 0, completed: 0, positive: 0, negative: 0 },
-      bac_stool: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tb_smear: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tb_presumptive: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tb_followup: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tb_rifampicin: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tb_mdr: { total: 0, completed: 0, positive: 0, negative: 0 },
-
-      // 6. Histology & Cytology
-      pap_smear: { total: 0, completed: 0, positive: 0, negative: 0 },
-      touch_prep: { total: 0, completed: 0, positive: 0, negative: 0 },
-      fna_thyroid: { total: 0, completed: 0, positive: 0, negative: 0 },
-      fna_lymph: { total: 0, completed: 0, positive: 0, negative: 0 },
-      fna_breast: { total: 0, completed: 0, positive: 0, negative: 0 },
-      fna_prostate: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hist_uterus: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hist_esophagus: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hist_colorectal: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hist_hepatobiliary: { total: 0, completed: 0, positive: 0, negative: 0 },
-
-      // 7. Serology
-      vdrl: { total: 0, completed: 0, positive: 0, negative: 0 },
-      tpha: { total: 0, completed: 0, positive: 0, negative: 0 },
-      asot: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hiv: { total: 0, completed: 0, positive: 0, negative: 0 },
-      brucella: { total: 0, completed: 0, positive: 0, negative: 0 },
-      rf: { total: 0, completed: 0, positive: 0, negative: 0 },
-      h_pylori: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hep_a: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hep_b: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hep_c: { total: 0, completed: 0, positive: 0, negative: 0 },
-      hcg_pregnancy: { total: 0, completed: 0, positive: 0, negative: 0 },
-      crag: { total: 0, completed: 0, positive: 0, negative: 0 },
-      widal: { total: 0, completed: 0, positive: 0, negative: 0 }
-    };
-
-    const addCounter = (itemKey, r) => {
-      if (!lineItemCounters[itemKey]) {
-        lineItemCounters[itemKey] = { total: 0, completed: 0, positive: 0, negative: 0, low: 0, high: 0 };
-      }
-      const c = lineItemCounters[itemKey];
-      c.total++;
-      if (isCompleted(r)) {
-        c.completed++;
-        if (isPositiveFlag(r)) c.positive++; else c.negative++;
-        if (isLowFlag(r)) c.low = (c.low || 0) + 1;
-        if (isHighFlag(r)) c.high = (c.high || 0) + 1;
-      }
-    };
-
-    rows.forEach(r => {
-      const n = `${r.test_name || ''} ${r.test_code || ''}`.toLowerCase();
-      const ageVal = r.calculated_age !== null && r.calculated_age !== undefined ? Number(r.calculated_age) : null;
-      const isUnder5 = ageVal !== null && !isNaN(ageVal) ? ageVal < 5 : false;
-
-      // 1. Urine
-      if (/urinalysis|urine routine|urine chemistry|urine dipstick|urine analysis|ua |24356-8|50556-0/.test(n)) addCounter('u_chem_total', r);
-      if (/urine glucose|glucose.*urine|sugar.*urine|glucosuria/.test(n)) addCounter('u_glucose', r);
-      if (/ketone/.test(n)) addCounter('u_ketones', r);
-      if (/protein.*urine|albumin.*urine|proteinuria/.test(n)) addCounter('u_proteins', r);
-      if (/urine microscopy|urine sed|microscopy.*urine/.test(n)) addCounter('u_micro_total', r);
-      if (/pus cell|leukocyte esterase|pyuria/.test(n)) addCounter('u_pus_cells', r);
-      if (/haematobium|bilharzia.*urine/.test(n)) addCounter('u_haematobium', r);
-      if (/trichomonas|t\. vaginalis/.test(n)) addCounter('u_tvaginalis', r);
-      if (/yeast|candida.*urine/.test(n)) addCounter('u_yeast', r);
-      if (/bacteria.*urine|bacteriuria/.test(n)) addCounter('u_bacteria', r);
-
-      // 2. Blood Chemistry
-      if (/blood sugar|rbs|fbs|glucose|glycemia|random blood sugar|fasting blood sugar|2345-7|2339-0|1558-6/.test(n)) addCounter('blood_sugar', r);
-      if (/ogtt|oral glucose tolerance/.test(n)) addCounter('ogtt', r);
-      if (/uecs|renal function|rft|kidney function|kft|urea & electrolyte|24362-6/.test(n)) addCounter('uecs_total', r);
-      if (/creatinine|serum creatinine|2160-0/.test(n)) addCounter('creatinine', r);
-      if (/urea|blood urea|bun|3094-0/.test(n)) addCounter('urea', r);
-      if (/sodium|serum sodium|na\+|2951-2/.test(n)) addCounter('sodium', r);
-      if (/potassium|serum potassium|k\+|2823-3/.test(n)) addCounter('potassium', r);
-      if (/chloride|cl\-|2075-0/.test(n)) addCounter('chlorides', r);
-      if (/lft|liver function|hepatic panel|liver panel|24325-3/.test(n)) addCounter('lft_total', r);
-      if (/direct bilirubin|conjugated bilirubin|1968-7/.test(n)) addCounter('direct_bilirubin', r);
-      if (/total bilirubin|serum bilirubin|1975-2/.test(n)) addCounter('total_bilirubin', r);
-      if (/asat|sgot|ast|1920-8/.test(n)) addCounter('ast_sgot', r);
-      if (/alat|sgpt|alt|1751-7/.test(n)) addCounter('alt_sgpt', r);
-      if (/total protein|serum protein|2885-2/.test(n)) addCounter('serum_protein', r);
-      if (/albumin|serum albumin|1751-7/.test(n)) addCounter('albumin', r);
-      if (/alkaline phosphatase|alp|6768-6/.test(n)) addCounter('alp', r);
-      if (/lipid profile|lipid panel|lipids|24331-1/.test(n)) addCounter('lipid_total', r);
-      if (/cholesterol|total cholesterol|2093-3/.test(n)) addCounter('cholesterol', r);
-      if (/triglyceride|2571-8/.test(n)) addCounter('triglycerides', r);
-      if (/ldl|2089-1/.test(n)) addCounter('ldl', r);
-      if (/t3|free t3|triiodothyronine/.test(n)) addCounter('t3', r);
-      if (/t4|free t4|thyroxine/.test(n)) addCounter('t4', r);
-      if (/tsh|thyroid stimulating|3016-3/.test(n)) addCounter('tsh', r);
-      if (/psa|prostate specific|2857-1/.test(n)) addCounter('psa', r);
-      if (/ca 15-3|ca153|ca-15-3/.test(n)) addCounter('ca15_3', r);
-      if (/ca 19-9|ca199|ca-19-9/.test(n)) addCounter('ca19_9', r);
-      if (/ca 125|ca125|ca-125/.test(n)) addCounter('ca125', r);
-      if (/cea|carcinoembryonic/.test(n)) addCounter('cea', r);
-      if (/afp|alpha fetoprotein/.test(n)) addCounter('afp', r);
-      if (/csf.*protein/.test(n)) addCounter('csf_proteins', r);
-      if (/csf.*glucose/.test(n)) addCounter('csf_glucose', r);
-
-      // 3. Parasitology & Malaria (Under vs 5 and above)
-      if (/rdt|rapid.*malaria|mrdt|malaria antigen|74850-9|50549-5/.test(n)) {
-        if (isUnder5) addCounter('malaria_rdt_u5', r);
-        else addCounter('malaria_rdt_o5', r);
-      } else if (/malaria|bs for mps|mps|blood smear for malaria|malaria microscopy|malaria smear|thick and thin|89574-8|58900-2|32729-6/.test(n)) {
-        if (isUnder5) addCounter('malaria_bs_u5', r);
-        else addCounter('malaria_bs_o5', r);
-      }
-      if (/taenia|tapeworm/.test(n)) addCounter('taenia', r);
-      if (/hymenolepis|h\. nana|h nana/.test(n)) addCounter('h_nana', r);
-      if (/hookworm|ancylostoma|necator/.test(n)) addCounter('hookworm', r);
-      if (/roundworm|ascaris/.test(n)) addCounter('roundworms', r);
-      if (/mansoni|schistosoma|bilharzia/.test(n)) addCounter('s_mansoni', r);
-      if (/trichuris|whipworm/.test(n)) addCounter('trichuris', r);
-      if (/amoeba|entamoeba|histolytica/.test(n)) addCounter('amoeba', r);
-      if (/stool|ova|cyst|o\/c|faecal|fecal|10701-1/.test(n)) addCounter('stool_total', r);
-
-      // 4. Haematology (Full Haemogram, CBC, etc.)
-      if (/haemogram|hemogram|cbc|full blood|complete blood|fbc|haematology|58410-2|57021-8|718-7|6690-2/.test(n)) addCounter('cbc_fbc', r);
-      if (/hb estimation|haemoglobin estimation|hemoglobin estimation|tallqvist|sahli/.test(n) && !/cbc|haemogram|hemogram|fbc/.test(n)) addCounter('hb_est', r);
-      if (/hba1c|glycated|glycohemoglobin|4548-4|17856-6/.test(n)) addCounter('hba1c', r);
-      if (/cd4|cd4 count|t-cell|8123-2/.test(n)) addCounter('cd4', r);
-      if (/sickl|hb s|sickle cell/.test(n)) addCounter('sickling', r);
-      if (/pbf|peripheral blood film|blood film|blood smear/.test(n)) addCounter('pbf', r);
-      if (/bma|bone marrow/.test(n)) addCounter('bma', r);
-      if (/coag|inr|pt\/inr|prothrombin|aptt|3173-2/.test(n)) addCounter('coag', r);
-      if (/reticulocyte|retic/.test(n)) addCounter('retic', r);
-      if (/esr|erythrocyte sedimentation|sed rate|30341-2/.test(n)) addCounter('esr', r);
-      if (/blood group|abo|rh |rh factor|rhesus|crossmatch|883-9|882-1/.test(n)) addCounter('blood_group', r);
-
-      // 5. Bacteriology & TB
-      if (/urine.*cult/.test(n)) addCounter('bac_urine', r);
-      if (/pus.*swab|wound.*swab/.test(n)) addCounter('bac_pus', r);
-      if (/hvs|vaginal swab/.test(n)) addCounter('bac_hvs', r);
-      if (/throat swab/.test(n)) addCounter('bac_throat', r);
-      if (/rectal swab/.test(n)) addCounter('bac_rectal', r);
-      if (/blood culture/.test(n)) addCounter('bac_blood', r);
-      if (/water/.test(n)) addCounter('bac_water', r);
-      if (/food/.test(n)) addCounter('bac_food', r);
-      if (/urethral swab/.test(n)) addCounter('bac_urethral', r);
-      if (/stool culture/.test(n)) addCounter('bac_stool', r);
-      if (/tb|tuberculosis|afb|gene xpert|genexpert|sputum afb|11475-1|89371-9/.test(n)) addCounter('tb_smear', r);
-
-      // 6. Histology
-      if (/pap|cervical smear/.test(n)) addCounter('pap_smear', r);
-      if (/touch prep/.test(n)) addCounter('touch_prep', r);
-      if (/fna.*thyroid/.test(n)) addCounter('fna_thyroid', r);
-      if (/fna.*lymph/.test(n)) addCounter('fna_lymph', r);
-      if (/fna.*breast/.test(n)) addCounter('fna_breast', r);
-      if (/fna.*prostate/.test(n)) addCounter('fna_prostate', r);
-      if (/uterus|cervix/.test(n) && /biopsy|histolog/.test(n)) addCounter('hist_uterus', r);
-      if (/esophagus/.test(n) && /biopsy|histolog/.test(n)) addCounter('hist_esophagus', r);
-      if (/colorectal|colon/.test(n) && /biopsy|histolog/.test(n)) addCounter('hist_colorectal', r);
-      if (/hepatobiliary|liver/.test(n) && /biopsy|histolog/.test(n)) addCounter('hist_hepatobiliary', r);
-
-      // 7. Serology
-      if (/vdrl|rpr|syphilis|treponema|20507-0|5292-8/.test(n)) { addCounter('vdrl', r); addCounter('syphilis_screening', r); }
-      if (/tpha/.test(n)) addCounter('tpha', r);
-      if (/asot|aso titre|antistreptolysin/.test(n)) addCounter('asot', r);
-      if (/hiv|determine|first response|29893-5|68961-2/.test(n)) { addCounter('hiv', r); addCounter('hiv_screening', r); }
-      if (/brucella|febrile antigen|brucellosis|22295-0/.test(n)) addCounter('brucella', r);
-      if (/rheumatoid|rf test|11572-5/.test(n)) addCounter('rf', r);
-      if (/pylori|h\. pylori|h pylori|helicobacter|29532-9|49540-8/.test(n)) addCounter('h_pylori', r);
-      if (/hepatitis a|hav/.test(n)) addCounter('hep_a', r);
-      if (/hepatitis b|hbsag|5196-1/.test(n)) { addCounter('hep_b', r); addCounter('hep_b_screening', r); }
-      if (/hepatitis c|hcv|13955-0/.test(n)) { addCounter('hep_c', r); addCounter('hep_c_screening', r); }
-      if (/pregnancy|upt|hcg|beta-hcg|bhcg|2106-3|19080-1/.test(n)) addCounter('hcg_pregnancy', r);
-      if (/crag|cryptococc/.test(n)) addCounter('crag', r);
-      if (/widal|typhoid|salmonella|42254-3/.test(n)) addCounter('widal', r);
-    });
-
     const testCounts = {};
     rows.forEach(r => {
-      const tName = r.test_name || 'Standard Lab Test';
-      if (!testCounts[tName]) testCounts[tName] = { total:0, completed:0, positive:0, category: categorize(tName, r.test_code) };
-      testCounts[tName].total++;
-      if (isCompleted(r)) testCounts[tName].completed++;
-      if (isPositiveFlag(r)) testCounts[tName].positive++;
+      if (!testCounts[r.test_name]) testCounts[r.test_name] = { total:0, completed:0, positive:0, category: categorize(r.test_name) };
+      testCounts[r.test_name].total++;
+      if (r.status === 'Completed') testCounts[r.test_name].completed++;
+      if (['high','critical'].includes(r.result_flag)) testCounts[r.test_name].positive++;
     });
-
-    return successResponse(res, 200, 'MOH 706 data fetched', {
-      period: { start, end },
-      totals: { total, completed, pending, processing },
-      summary,
-      line_items: lineItemCounters,
-      tests: testCounts
-    });
+    return successResponse(res, 200, 'MOH 706 data fetched', { period: { start, end }, totals: { total, completed, pending, processing }, summary, tests: testCounts });
   } catch (error) {
     console.error('MOH 706 error:', error.message);
     return errorResponse(res, 500, 'Failed to generate MOH 706: ' + error.message);

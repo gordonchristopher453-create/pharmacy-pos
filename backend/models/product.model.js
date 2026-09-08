@@ -21,7 +21,7 @@ class ProductModel {
       LEFT JOIN categories c ON p.category_id::text = c.id::text
       LEFT JOIN suppliers s ON p.supplier_id::text = s.id::text
       LEFT JOIN stock st ON p.id::text = st.product_id::text
-      WHERE p.is_active = true AND ($1::text IS NULL OR p.pharmacy_id::text = $1::text)
+      WHERE p.is_active = true AND (p.pharmacy_id::text = $1::text OR p.pharmacy_id IS NULL)
     `;
     const params = [pharmacy_id];
 
@@ -52,7 +52,7 @@ class ProductModel {
       LEFT JOIN categories c ON p.category_id::text = c.id::text
       LEFT JOIN suppliers s ON p.supplier_id::text = s.id::text
       LEFT JOIN stock st ON p.id::text = st.product_id::text
-      WHERE p.id::text = $1::text AND ($2::text IS NULL OR p.pharmacy_id::text = $2::text)
+      WHERE p.id::text = $1::text AND (p.pharmacy_id::text = $2::text OR p.pharmacy_id IS NULL)
       GROUP BY p.id, c.name, s.name
     `, [id, pharmacy_id]);
     return result.rows[0];
@@ -65,7 +65,7 @@ class ProductModel {
       FROM products p
       LEFT JOIN categories c ON p.category_id::text = c.id::text
       LEFT JOIN stock st ON p.id::text = st.product_id::text
-      WHERE p.barcode = $1 AND p.is_active = true AND ($2::text IS NULL OR p.pharmacy_id::text = $2::text)
+      WHERE p.barcode = $1 AND p.is_active = true AND (p.pharmacy_id::text = $2::text OR p.pharmacy_id IS NULL)
       GROUP BY p.id, c.name
     `, [barcode, pharmacy_id]);
     return result.rows[0];
@@ -78,7 +78,7 @@ class ProductModel {
       SET name=$1, generic_name=$2, barcode=$3, category_id=$4, supplier_id=$5,
           unit=$6, selling_price=$7, min_selling_price=$8, max_selling_price=$9,
           reorder_level=$10, requires_prescription=$11, is_active=$12, updated_at=NOW()
-      WHERE id::text=$13::text AND ($14::text IS NULL OR pharmacy_id::text=$14::text)
+      WHERE id::text=$13::text AND (pharmacy_id::text=$14::text OR pharmacy_id IS NULL)
       RETURNING *
     `, [name, toNull(generic_name), toNull(barcode), toNull(category_id), toNull(supplier_id), unit, selling_price, min_selling_price || 0, max_selling_price || 0, reorder_level, requires_prescription, is_active, id, pharmacy_id]);
     return result.rows[0];
@@ -88,7 +88,7 @@ class ProductModel {
     const result = await pool.query(`
       UPDATE products
       SET is_active = false, updated_at = NOW()
-      WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
+      WHERE id::text = $1::text AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL)
       RETURNING *
     `, [id, pharmacy_id]);
     return result.rows[0];

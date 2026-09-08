@@ -2,6 +2,7 @@
   "name": "pharmacy-pos",
   "version": "1.0.0",
   "scripts": {
+    "postinstall": "cd frontend && npm install --production=false && npm run build",
     "build": "cd frontend && npm install --production=false && npm run build && cd ../backend && npm install",
     "lint": "echo 'Lint passed'",
     "dev": "NODE_ENV=development node backend/server.js",

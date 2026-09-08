@@ -18,29 +18,11 @@ export const printMedicalInvoice = (visitRecord, pharmacy, currentUser) => {
   const headerLines = (header || '').split('\n').map(l => l.trim()).filter(l => l);
 
   const rawItems = visitRecord.items || visitRecord.billing_items || [];
-  const items = Array.isArray(rawItems) ? rawItems.filter(i => i && (i.id || i.item_name || i.description)) : [];
+  const items = Array.isArray(rawItems) ? rawItems.filter(i => i && (i.id || i.item_name)) : [];
 
-  const itemsBilled = items.reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * (i.quantity || 1)) || 0), 0);
-  const itemsPaid = items.reduce((s, i) => {
-    const st = (i.status || '').toLowerCase();
-    const pm = (i.payment_method || '').toLowerCase();
-    if (['paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared'].includes(st)) {
-      return s + parseFloat(i.paid_amount || i.total_price || (i.unit_price * (i.quantity || 1)) || 0);
-    }
-    if (['cash', 'mpesa', 'bank', 'card', 'insurance', 'sha', 'nhif', 'corporate'].includes(pm) && st !== 'pending' && st !== 'waived' && st !== 'cancelled') {
-      return s + parseFloat(i.paid_amount || i.total_price || (i.unit_price * (i.quantity || 1)) || 0);
-    }
-    if (st === 'partial') {
-      return s + parseFloat(i.paid_amount || 0);
-    }
-    return s;
-  }, 0);
-
-  const itemsWaived = items.filter(i => (i.status || '').toLowerCase() === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * (i.quantity || 1)) || 0), 0);
-
-  const totalBilled = items.length > 0 ? itemsBilled : parseFloat(visitRecord.total_billed || visitRecord.total_amount || 0);
-  const totalPaid = items.length > 0 ? itemsPaid : parseFloat(visitRecord.total_paid || visitRecord.paid_amount || (visitRecord.fee_paid ? totalBilled : 0));
-  const totalWaived = items.length > 0 ? itemsWaived : parseFloat(visitRecord.total_waived || 0);
+  const totalBilled = parseFloat(visitRecord.total_billed || visitRecord.total_amount || items.reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * i.quantity) || 0), 0));
+  const totalPaid = parseFloat(visitRecord.total_paid || items.filter(i => ['paid', 'insurance', 'nhif', 'sha', 'corporate'].includes(i.status)).reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * i.quantity) || 0), 0));
+  const totalWaived = parseFloat(visitRecord.total_waived || items.filter(i => i.status === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * i.quantity) || 0), 0));
   const copayPaid = parseFloat(visitRecord.copay_amount || 0);
   const balance = Math.max(0, totalBilled - totalPaid - totalWaived);
 

@@ -1,24 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSelector } from "react-redux";
-import { useNavigate } from "react-router-dom";
 import { RefreshCw, Loader, X, Search, Pill, ShieldAlert, CheckCircle, Clock, Calendar, AlertCircle } from "lucide-react";
 import api from "../services/api";
 import toast from "react-hot-toast";
 
-export default function DispensePage({ user: propUser }) {
-  const authUser = useSelector(state => state.auth.user);
-  const user = propUser || authUser;
-  const navigate = useNavigate();
-
-  const isPharmacyOnly = user?.pharmacy?.facility_type === 'pharmacy';
-
-  useEffect(() => {
-    if (isPharmacyOnly) {
-      toast('Standalone pharmacies operate via Point of Sale (POS)', { icon: '💊' });
-      navigate('/app/pos', { replace: true });
-    }
-  }, [isPharmacyOnly, navigate]);
-
+export default function DispensePage({ user }) {
   const [tab, setTab]               = useState('queue'); // 'queue' | 'inpatient' | 'history'
   const [rxQueue, setRxQueue]       = useState([]);
   const [inpatientRxQueue, setInpatientRxQueue] = useState([]);
@@ -33,106 +18,54 @@ export default function DispensePage({ user: propUser }) {
   const today = new Date().toISOString().split('T')[0];
   const [dateFrom, setDateFrom]     = useState(today);
   const [dateTo, setDateTo]         = useState(today);
-  const [queueDateFrom, setQueueDateFrom] = useState(today);
-  const [queueDateTo, setQueueDateTo]     = useState(today);
-  const [queueAllDates, setQueueAllDates] = useState(false);
   const [queueDate, setQueueDate]   = useState(today);
   const [queueSearch, setQueueSearch] = useState('');
 
-  const fetchRxQueue = useCallback(async (silent = false) => {
-    if (!silent) setRxLoading(true);
+  const fetchRxQueue = useCallback(async () => {
+    setRxLoading(true);
     try {
       const params = new URLSearchParams();
-      if (queueAllDates) {
-        params.append('all_dates', 'true');
+      if (queueDate) {
+        params.append('date_from', queueDate);
+        params.append('date_to', queueDate);
       } else {
-        if (queueDateFrom) params.append('date_from', queueDateFrom);
-        if (queueDateTo) params.append('date_to', queueDateTo);
+        params.append('all_dates', 'true');
       }
       if (queueSearch) params.append('search', queueSearch);
-      
-      let res;
-      try {
-        res = await api.get('/consultations/pharmacy-queue?' + params.toString());
-      } catch (e1) {
-        console.warn('Consultations queue endpoint failed, trying /pharmacy/queue fallback:', e1?.message);
-        res = await api.get('/pharmacy/queue');
-      }
+      const res = await api.get('/consultations/pharmacy-queue?' + params.toString());
+      setRxQueue(res.data.data || []);
+    } catch { toast.error('Failed to fetch prescription queue'); }
+    finally { setRxLoading(false); }
+  }, [queueDate, queueSearch]);
 
-      if (res && res.data) {
-        const rawData = res.data.data || [];
-        // Normalize prescriptions format if coming from simple fallback
-        const formatted = rawData.map(item => {
-          if (item.prescriptions && Array.isArray(item.prescriptions)) return item;
-          return {
-            id: item.visit_id || item.id,
-            visit_number: item.visit_number || 'OPD-RX',
-            patient_name: item.patient_name || 'Patient',
-            created_at: item.created_at || new Date().toISOString(),
-            prescriptions: [{
-              id: item.id,
-              drug_name: item.drug_name,
-              dosage: item.dosage,
-              frequency: item.frequency,
-              duration: item.duration,
-              route: item.route || 'oral',
-              quantity: item.quantity || 1,
-              instructions: item.instructions,
-              status: item.status || 'pending',
-              price: item.price || 0,
-              product_id: item.product_id
-            }]
-          };
-        });
-        setRxQueue(formatted);
-      }
-    } catch (err) { 
-      console.error("Prescription queue fetch error:", err);
-      if (!silent) toast.error('Unable to sync prescription queue. Please refresh.');
-    }
-    finally { 
-      if (!silent) setRxLoading(false); 
-    }
-  }, [queueDateFrom, queueDateTo, queueAllDates, queueSearch]);
-
-  const fetchInpatientQueue = useCallback(async (silent = false) => {
-    if (!silent) setRxLoading(true);
+  const fetchInpatientQueue = useCallback(async () => {
+    setRxLoading(true);
     try {
       const res = await api.get('/inpatient/pharmacy-queue');
-      setInpatientRxQueue(res.data?.data || []);
-    } catch (err) { 
-      console.warn("Inpatient queue fetch error:", err?.message);
-      setInpatientRxQueue([]);
-    }
-    finally { 
-      if (!silent) setRxLoading(false); 
-    }
+      setInpatientRxQueue(res.data.data || []);
+    } catch { toast.error('Failed to fetch inpatient prescriptions folder'); }
+    finally { setRxLoading(false); }
   }, []);
 
-  const fetchHistory = useCallback(async (silent = false) => {
-    if (!silent) setHistLoading(true);
+  const fetchHistory = useCallback(async () => {
+    setHistLoading(true);
     try {
       const params = new URLSearchParams({ limit: '500' });
       if (dateFrom) params.append('date_from', dateFrom);
       if (dateTo) params.append('date_to', dateTo);
       if (search) params.append('search', search);
       const res = await api.get('/pharmacy/dispense-history?' + params.toString());
-      setHistory(res.data?.data || []);
-    } catch (err) { 
-      console.error("Dispense history error:", err);
-      if (!silent) toast.error('Failed to fetch dispense history'); 
-    }
-    finally { 
-      if (!silent) setHistLoading(false); 
-    }
+      setHistory(res.data.data || []);
+    } catch { toast.error('Failed to fetch dispense history'); }
+    finally { setHistLoading(false); }
   }, [dateFrom, dateTo, search]);
 
   useEffect(() => {
-    fetchRxQueue(false);
-    fetchInpatientQueue(false);
+    fetchRxQueue();
+    fetchInpatientQueue();
     const interval = setInterval(() => {
-      fetchRxQueue(true);
-      fetchInpatientQueue(true);
+      fetchRxQueue();
+      fetchInpatientQueue();
     }, 25000);
     return () => clearInterval(interval);
   }, [fetchRxQueue, fetchInpatientQueue]);
@@ -218,8 +151,8 @@ export default function DispensePage({ user: propUser }) {
         </div>
 
         {tab === 'queue' && (
-          <button onClick={() => fetchRxQueue(false)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700 }}>
-            <RefreshCw size={15} style={{ color: 'var(--accent)', animation: rxLoading ? 'spin 1s linear infinite' : 'none' }}/> Refresh Queue
+          <button onClick={fetchRxQueue} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700 }}>
+            <RefreshCw size={15} style={{ color: 'var(--accent)' }}/> Refresh Queue
           </button>
         )}
       </div>
@@ -264,80 +197,15 @@ export default function DispensePage({ user: propUser }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'flex-end' }}>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>FILTER DATE</label>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: 4, background: 'var(--bg-elevated)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQueueAllDates(false);
-                        setQueueDateFrom(today);
-                        setQueueDateTo(today);
-                      }}
-                      style={{
-                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                        background: !queueAllDates && queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'transparent',
-                        color: !queueAllDates && queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
-                      }}
-                    >
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-                        setQueueAllDates(false);
-                        setQueueDateFrom(w);
-                        setQueueDateTo(today);
-                      }}
-                      style={{
-                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                        background: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
-                        color: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
-                      }}
-                    >
-                      7 Days
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQueueAllDates(true)}
-                      style={{
-                        padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                        background: queueAllDates ? 'var(--accent)' : 'transparent',
-                        color: queueAllDates ? '#0F1612' : 'var(--text-muted)'
-                      }}
-                    >
-                      All
-                    </button>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
-                    <input
-                      type="date"
-                      value={queueDateFrom}
-                      onChange={e => {
-                        setQueueAllDates(false);
-                        const val = e.target.value;
-                        setQueueDateFrom(val);
-                        if (queueDateTo < val) setQueueDateTo(val);
-                      }}
-                      style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
-                    <input
-                      type="date"
-                      value={queueDateTo}
-                      onChange={e => {
-                        setQueueAllDates(false);
-                        const val = e.target.value;
-                        setQueueDateTo(val);
-                      }}
-                      style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
-                    />
-                  </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input type="date" value={queueDate} onChange={e => setQueueDate(e.target.value)}
+                    style={{ padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
+                  <button onClick={() => setQueueDate(today)} style={{ padding: '0 12px', background: queueDate === today ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${queueDate === today ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, color: queueDate === today ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                    Today
+                  </button>
+                  <button onClick={() => setQueueDate('')} style={{ padding: '0 12px', background: !queueDate ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${!queueDate ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, color: !queueDate ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                    All Pending
+                  </button>
                 </div>
               </div>
               <div>
@@ -639,7 +507,6 @@ export default function DispensePage({ user: propUser }) {
                           setSelectedRx(prev => ({ ...prev, prescriptions: remaining }));
                         }
                         fetchRxQueue();
-                        fetchInpatientQueue();
                       } catch (err) { toast.error(err.response?.data?.message || 'Failed to dispense drug'); }
                     }} disabled={!rxPayment?.paid}
                       style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: rxPayment?.paid ? 'var(--accent)' : 'var(--bg-surface)', color: rxPayment?.paid ? '#0F1612' : 'var(--text-faint)', fontWeight: 800, cursor: rxPayment?.paid ? 'pointer' : 'not-allowed', fontSize: 13 }}>
