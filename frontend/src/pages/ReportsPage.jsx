@@ -88,6 +88,18 @@ export default function ReportsPage() {
   const handlePrintMOH204 = () => {
     const win = window.open('', '_blank');
     const selectedMonthName = MONTHS[mohMonth - 1];
+
+    const rawDoctorName = user?.full_name || user?.name || user?.email?.split('@')[0] || 'Medical Officer';
+    const isDoctorRole = user?.role === 'doctor' || user?.role === 'clinician';
+    const preparedDoctorName = (isDoctorRole && !rawDoctorName.toLowerCase().startsWith('dr'))
+      ? `Dr. ${rawDoctorName}`
+      : rawDoctorName;
+    const preparedDoctorRole = user?.role
+      ? (user.role.charAt(0).toUpperCase() + user.role.slice(1).replace('_', ' '))
+      : 'Medical Officer / Clinician';
+
+    const facilityName = user?.pharmacy?.name || 'HEKIMA MEDICAL CENTRE';
+    const facilityAddress = user?.pharmacy?.address || 'P.O. Box 1234, Nairobi';
     
     // Categorize and summarize visits
     let u5M = 0, u5F = 0, o5M = 0, o5F = 0;
@@ -142,59 +154,71 @@ export default function ReportsPage() {
         <head>
           <title>MOH 204 Outpatient Summary Report</title>
           <style>
-            body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin: 30px; font-size: 11px; color: #333; }
-            .header { text-align: center; border-bottom: 3px double #1a4a8a; padding-bottom: 12px; margin-bottom: 15px; }
-            .republic { font-size: 14px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; }
-            .title { font-size: 16px; font-weight: 800; color: #1a4a8a; margin: 4px 0; text-transform: uppercase; }
-            .meta { font-size: 11px; font-weight: bold; color: #555; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th, td { border: 1px solid #999; padding: 6px 8px; text-align: left; }
-            th { background-color: #f2f6fa; font-weight: bold; text-align: center; font-size: 10px; }
-            .subth { font-size: 9px; background-color: #fcfdfe; }
-            .number { text-align: center; font-family: monospace; font-weight: bold; font-size: 12px; }
-            .total-row { background-color: #eef2f7; font-weight: bold; }
-            .signature-block { margin-top: 40px; display: flex; justify-content: space-between; font-size: 11px; }
-            .sign-line { border-top: 1px solid #000; width: 220px; text-align: center; padding-top: 4px; margin-top: 25px; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 30px; font-size: 11px; color: #0f172a; line-height: 1.4; background: #fff; }
+            .header { text-align: center; border-bottom: 3px double #1e3a8a; padding-bottom: 12px; margin-bottom: 16px; }
+            .republic { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #0f172a; }
+            .title { font-size: 16px; font-weight: 800; color: #1e3a8a; margin: 4px 0; text-transform: uppercase; }
+            .meta { font-size: 11px; font-weight: 600; color: #475569; }
+            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; border: 1.5px solid #64748b; }
+            .info-table td { padding: 7px 10px; font-size: 11.5px; border: 1px solid #94a3b8; }
+            .info-label { font-weight: 700; color: #334155; background: #f1f5f9; width: 18%; }
+            table.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #334155; font-size: 11.5px; }
+            table.data-table th, table.data-table td { border: 1px solid #94a3b8; padding: 7px 9px; }
+            table.data-table th { background-color: #e2e8f0; font-weight: 800; text-align: center; font-size: 11px; color: #0f172a; border: 1px solid #64748b; }
+            table.data-table .subth { font-size: 10px; background-color: #f1f5f9; font-weight: 700; }
+            .number { text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; }
+            .total-row td { background-color: #e2e8f0; font-weight: 800; border: 1.5px solid #334155 !important; }
+            .signature-block { margin-top: 35px; display: flex; justify-content: space-between; font-size: 11px; page-break-inside: avoid; border-top: 1.5px solid #cbd5e1; padding-top: 14px; }
             @media print {
-              body { margin: 15px; }
+              body { margin: 10mm; font-size: 11px; }
+              @page { size: A4 portrait; margin: 10mm; }
               button { display: none; }
+              table thead { display: table-header-group; }
+              table tr { page-break-inside: avoid; }
             }
           </style>
         </head>
         <body>
           <div class="header">
-            <div class="republic">REPUBLIC OF KENYA - MINISTRY OF HEALTH</div>
+            <div class="republic">REPUBLIC OF KENYA — MINISTRY OF HEALTH</div>
             <div class="title">MOH 204 OUTPATIENT SERVICES AGGREGATE SUMMARY</div>
             <div class="meta">
-              FACILITY: HEKIMA MEDICAL CENTRE | CODE: 12345 | PROVINCE/COUNTY: NAIROBI
+              FACILITY: <strong>${facilityName.toUpperCase()}</strong> | LOCATION: ${facilityAddress}
             </div>
-            <div style="font-size: 12px; font-weight: bold; margin-top: 5px; color: #1a4a8a;">
+            <div style="font-size: 12px; font-weight: 800; margin-top: 5px; color: #1e3a8a;">
               REPORT PERIOD: ${selectedMonthName.toUpperCase()} ${mohYear}
             </div>
           </div>
 
-          <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px;">SUMMARY OVERVIEW:</div>
-          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; background: #f9fbfd; padding: 12px; border: 1px solid #ddd; border-radius: 8px; text-align: center;">
-            <div><strong style="color: #666;">Under 5 (M)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${u5M}</span></div>
-            <div><strong style="color: #666;">Under 5 (F)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${u5F}</span></div>
-            <div><strong style="color: #666;">Over 5 (M)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${o5M}</span></div>
-            <div><strong style="color: #666;">Over 5 (F)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${o5F}</span></div>
-          </div>
+          <table class="info-table">
+            <tr>
+              <td class="info-label">Reporting Period</td>
+              <td><strong>${selectedMonthName} ${mohYear}</strong></td>
+              <td class="info-label">Prepared By</td>
+              <td><strong>${preparedDoctorName}</strong> <span style="color:#64748b; font-size:11px;">(${preparedDoctorRole})</span></td>
+            </tr>
+            <tr>
+              <td class="info-label">Total Attendance</td>
+              <td><strong>${u5M + u5F + o5M + o5F}</strong> OPD visits</td>
+              <td class="info-label">Demographics</td>
+              <td><strong>Under 5:</strong> ${u5M + u5F} (${u5M}M / ${u5F}F) &nbsp;|&nbsp; <strong>Over 5:</strong> ${o5M + o5F} (${o5M}M / ${o5F}F)</td>
+            </tr>
+          </table>
 
-          <table>
+          <table class="data-table">
             <thead>
               <tr>
-                <th rowspan="2" style="width: 4%;">#</th>
-                <th rowspan="2" style="text-align: left; width: 46%;">DISEASE CATEGORY (MOH 204 CLASSIFICATIONS)</th>
+                <th rowspan="2" style="width: 36px;">#</th>
+                <th rowspan="2" style="text-align: left;">DISEASE CATEGORY (MOH 204 CLASSIFICATIONS)</th>
                 <th colspan="2">UNDER 5 YEARS</th>
                 <th colspan="2">OVER 5 YEARS</th>
-                <th rowspan="2" style="width: 14%;">GRAND TOTAL</th>
+                <th rowspan="2" style="width: 100px;">GRAND TOTAL</th>
               </tr>
               <tr>
-                <th class="subth" style="width: 9%;">MALE</th>
-                <th class="subth" style="width: 9%;">FEMALE</th>
-                <th class="subth" style="width: 9%;">MALE</th>
-                <th class="subth" style="width: 9%;">FEMALE</th>
+                <th class="subth" style="width: 75px; color: #1e40af;">MALE</th>
+                <th class="subth" style="width: 75px; color: #be185d;">FEMALE</th>
+                <th class="subth" style="width: 75px; color: #1e40af;">MALE</th>
+                <th class="subth" style="width: 75px; color: #be185d;">FEMALE</th>
               </tr>
             </thead>
             <tbody>
@@ -202,36 +226,46 @@ export default function ReportsPage() {
                 const item = diseaseSummary[k];
                 const rTotal = item.u5m + item.u5f + item.o5m + item.o5f;
                 return `
-                  <tr>
-                    <td class="number">${i + 1}</td>
-                    <td style="font-weight: 600;">${item.label}</td>
-                    <td class="number" style="color: ${item.u5m > 0 ? '#111' : '#ccc'};">${item.u5m}</td>
-                    <td class="number" style="color: ${item.u5f > 0 ? '#111' : '#ccc'};">${item.u5f}</td>
-                    <td class="number" style="color: ${item.o5m > 0 ? '#111' : '#ccc'};">${item.o5m}</td>
-                    <td class="number" style="color: ${item.o5f > 0 ? '#111' : '#ccc'};">${item.o5f}</td>
-                    <td class="number" style="background-color: #fafbfc; color: #1a4a8a;">${rTotal}</td>
+                  <tr style="background: ${i % 2 === 1 ? '#f8fafc' : '#ffffff'};">
+                    <td class="number" style="color: #475569; width: 36px;">${i + 1}</td>
+                    <td style="font-weight: 600; text-align: left;">${item.label}</td>
+                    <td class="number" style="color: ${item.u5m > 0 ? '#1e40af' : '#94a3b8'};">${item.u5m}</td>
+                    <td class="number" style="color: ${item.u5f > 0 ? '#be185d' : '#94a3b8'};">${item.u5f}</td>
+                    <td class="number" style="color: ${item.o5m > 0 ? '#1e40af' : '#94a3b8'};">${item.o5m}</td>
+                    <td class="number" style="color: ${item.o5f > 0 ? '#be185d' : '#94a3b8'};">${item.o5f}</td>
+                    <td class="number" style="background-color: #f1f5f9; color: #0f172a; font-weight: 800;">${rTotal}</td>
                   </tr>
                 `;
               }).join('')}
-              <tr class="total-row">
-                <td colspan="2">GRAND AGGREGATE TOTALS</td>
-                <td class="number">${u5M}</td>
-                <td class="number">${u5F}</td>
-                <td class="number">${o5M}</td>
-                <td class="number">${o5F}</td>
-                <td class="number" style="color: #1a4a8a; font-size: 13px;">${mohVisits.length}</td>
-              </tr>
             </tbody>
+            <tfoot>
+              <tr class="total-row">
+                <td colspan="2" style="text-align: right; padding-right: 12px; font-weight: 800; text-transform: uppercase;">GRAND AGGREGATE TOTALS</td>
+                <td class="number" style="color: #1e40af; font-size: 12.5px;">${u5M}</td>
+                <td class="number" style="color: #be185d; font-size: 12.5px;">${u5F}</td>
+                <td class="number" style="color: #1e40af; font-size: 12.5px;">${o5M}</td>
+                <td class="number" style="color: #be185d; font-size: 12.5px;">${o5F}</td>
+                <td class="number" style="color: #0f172a; font-size: 13.5px; background: #cbd5e1;">${u5M + u5F + o5M + o5F}</td>
+              </tr>
+            </tfoot>
           </table>
 
           <div class="signature-block">
-            <div>
-              <div>Compiled By:</div>
-              <div class="sign-line">Record Officer Signature & Stamp</div>
+            <div style="text-align: left; width: 260px;">
+              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Prepared By (Logged-in Clinician):</div>
+              <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">${preparedDoctorName}</div>
+              <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">${preparedDoctorRole}</div>
+              <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
+                Doctor / Clinician's Signature & Date
+              </div>
             </div>
-            <div>
-              <div>Approved By:</div>
-              <div class="sign-line">Medical Superintendent / Director</div>
+            <div style="text-align: left; width: 260px;">
+              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Verified & Approved By:</div>
+              <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">Medical Superintendent</div>
+              <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">Health Records & In-Charge</div>
+              <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
+                Official Stamp & Date
+              </div>
             </div>
           </div>
         </body>
