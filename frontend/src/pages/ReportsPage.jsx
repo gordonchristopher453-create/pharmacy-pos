@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { TrendingUp, Package, RefreshCw, Loader, AlertTriangle, Printer, Search, FileText } from 'lucide-react';
+import FinancialSummaryReport from '../components/FinancialSummaryReport';
 
 const Card = ({ children, style = {} }) => (
   <div style={{ background: 'var(--bg-surface)', borderRadius: 14, border: '1px solid var(--border)', ...style }}>{children}</div>
@@ -571,7 +572,7 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        <Tab label="📋 Daily Summary" active={tab==='daily'} onClick={() => setTab('daily')} />
+        <Tab label="💰 Financial & Shift Summary" active={tab==='daily'} onClick={() => setTab('daily')} />
         <Tab label="🧬 Patient History" active={tab==='history'} onClick={() => setTab('history')} />
         {!isLab && <Tab label="📊 Sales Report" active={tab==='sales'} onClick={() => setTab('sales')} />}
         {!isLab && <Tab label="📅 Monthly Trend" active={tab==='monthly'} onClick={() => setTab('monthly')} />}
@@ -579,16 +580,6 @@ export default function ReportsPage() {
         <Tab label="🏛 MOH National Reports" active={tab==='moh'} onClick={() => setTab('moh')} />
         {isLab && <Tab label="🔬 MOH Reports" active={tab==='lab'} onClick={() => setTab('lab')} />}
       </div>
-
-      {/* Date filter for daily */}
-      {tab === 'daily' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 4 }}>DATE</label>
-            <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)} style={{ padding: '9px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
-          </div>
-        </div>
-      )}
 
       {/* Date filters for sales */}
       {tab === 'sales' && (
@@ -608,88 +599,9 @@ export default function ReportsPage() {
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Loader size={28} color="var(--accent)" style={{ animation: 'spin 0.8s linear infinite' }} /></div>
       ) : (
         <>
-          {/* ── DAILY SUMMARY ── */}
-          {tab === 'daily' && dailyData && (
-            <div ref={printRef}>
-              {/* Print Header */}
-              <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '2px solid var(--border)' }}>
-                <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>{dailyData.pharmacy?.name || 'Medicare HMS'}</h2>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{dailyData.pharmacy?.address} {dailyData.pharmacy?.phone ? `• ${dailyData.pharmacy.phone}` : ''}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginTop: 6 }}>Daily Summary Report — {fmtDate(dailyData.date)}</div>
-              </div>
-
-              {/* Summary Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}>
-                {[
-                  { label: 'Total Patients', value: dailyData.visits?.length || 0, color: 'var(--accent)' },
-                  { label: 'Total Sales', value: fmt(dailyData.sales_summary?.total_sales), color: 'var(--info)' },
-                  { label: 'Lab Tests', value: `${dailyData.lab_summary?.completed || 0}/${dailyData.lab_summary?.total || 0}`, color: 'var(--warning)' },
-                  { label: 'M-Pesa', value: fmt(dailyData.sales_summary?.mpesa), color: 'var(--success)' },
-                ].map(({ label, value, color }) => (
-                  <Card key={label} style={{ padding: 18 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{label}</div>
-                    <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 4 }}>{value}</div>
-                  </Card>
-                ))}
-              </div>
-
-              {/* Patients Table */}
-              <Card style={{ padding: 20, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>👥 Patients Attended</div>
-                {(dailyData.visits || []).length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-faint)', fontSize: 13 }}>No visits for this date</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid var(--border)' }}>
-                        {['#','Patient','No.','Gender','Age','Visit Type','Status','Time'].map(h => (
-                          <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dailyData.visits.map((v, i) => (
-                        <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-faint)' }}>{i+1}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{v.patient_name}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.patient_number}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.gender}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{age(v.date_of_birth)}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.visit_type?.toUpperCase()}</td>
-                          <td style={{ padding: '9px 10px' }}>
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: v.status==='discharged'||v.status==='Completed' ? 'var(--accent-soft)' : 'var(--bg-elevated)', color: v.status==='discharged'||v.status==='Completed' ? 'var(--accent)' : 'var(--text-muted)' }}>
-                              {v.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{new Date(v.visit_date).toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </Card>
-
-              {/* Sales Breakdown */}
-              <Card style={{ padding: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>💰 Revenue Breakdown</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
-                  {[
-                    { label: 'Cash Sales', value: fmt(dailyData.sales_summary?.cash) },
-                    { label: 'M-Pesa Sales', value: fmt(dailyData.sales_summary?.mpesa) },
-                    { label: 'Total Transactions', value: dailyData.sales_summary?.total_transactions || 0 },
-                    { label: 'Total Revenue', value: fmt(dailyData.sales_summary?.total_sales) },
-                  ].map(({ label, value }) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                  Printed: {new Date().toLocaleString('en-KE')} • {user?.full_name}
-                </div>
-              </Card>
-            </div>
+          {/* ── FINANCIAL & SHIFT SUMMARY ── */}
+          {tab === 'daily' && (
+            <FinancialSummaryReport initialDateFrom={dailyDate} initialDateTo={dailyDate} />
           )}
 
           {/* ── PATIENT HISTORY ── */}

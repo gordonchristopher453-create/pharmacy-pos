@@ -111,6 +111,8 @@ const ROLES = {
   radiologist:      'radiologist',
   pharmacist:       'pharmacist',
   store_manager:    'store_manager',
+  hr:               'hr',
+  hr_manager:       'hr_manager',
 };
 
 const ROLE_PERMISSIONS = {
@@ -205,6 +207,20 @@ const ROLE_PERMISSIONS = {
     'can_manage_stock','can_manage_purchases','can_manage_suppliers',
     'can_manage_stock_transfers','can_do_stock_audits',
   ],
+
+  [ROLES.hr]: [
+    'can_manage_users','can_view_all_reports','can_view_executive_dashboard',
+    'can_view_financial_reports','can_view_revenue_reports','can_view_reconciliation',
+    'can_view_outstanding_balances','can_view_audit_reports','can_view_cash_reports',
+    'can_view_daily_collections',
+  ],
+
+  [ROLES.hr_manager]: [
+    'can_manage_users','can_view_all_reports','can_view_executive_dashboard',
+    'can_view_financial_reports','can_view_revenue_reports','can_view_reconciliation',
+    'can_view_outstanding_balances','can_view_audit_reports','can_view_cash_reports',
+    'can_view_daily_collections',
+  ],
 };
 
 const ROLE_META = {
@@ -214,6 +230,8 @@ const ROLE_META = {
   cashier:          { label: 'Cashier',           icon: '🧾', color: '#eab308' },
   sha_officer:      { label: 'SHA Officer',       icon: '🏥', color: '#06b6d4' },
   accountant:       { label: 'Accountant',        icon: '📊', color: '#8b5cf6' },
+  hr:               { label: 'Human Resource (HR)', icon: '💼', color: '#6366f1' },
+  hr_manager:       { label: 'HR Manager',         icon: '💼', color: '#6366f1' },
   nurse:            { label: 'Nurse',             icon: '🩺', color: '#ec4899' },
   mch_nurse:        { label: 'MCH Nurse',         icon: '👶', color: '#f43f5e' },
   clinical_officer: { label: 'Clinical Officer',  icon: '🩻', color: '#3b82f6' },

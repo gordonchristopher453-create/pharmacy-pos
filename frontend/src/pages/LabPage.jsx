@@ -473,6 +473,24 @@ const MOH706Report = ({ user }) => {
   };
   const autoSet = (cat, field, val) => setOverrides(p => ({ ...p, [`auto_${cat}_${field}`]: val }));
 
+  const getItemDefault = (itemKey, colIdx, totalCols) => {
+    if (!data?.line_items?.[itemKey]) return '';
+    const item = data.line_items[itemKey];
+    if (totalCols === 1) {
+      return item.positive ?? item.completed ?? item.total ?? 0;
+    }
+    if (totalCols === 2) {
+      if (colIdx === 0) return item.completed ?? item.total ?? 0;
+      if (colIdx === 1) return item.positive ?? 0;
+    }
+    if (totalCols === 3) {
+      if (colIdx === 0) return item.completed ?? item.total ?? 0;
+      if (colIdx === 1) return item.low ?? 0;
+      if (colIdx === 2) return item.high ?? item.positive ?? 0;
+    }
+    return 0;
+  };
+
   const Cell = ({ k, def = '' }) => (
     <input value={getVal(k, def)} onChange={e => setVal(k, e.target.value)}
       style={{ width: 70, textAlign: 'center', padding: '3px 4px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }} />
@@ -501,11 +519,38 @@ const MOH706Report = ({ user }) => {
     </tr>
   );
 
-  const Row = ({ label, k, cols = 1, cat, field, posField }) => (
+  const Row = ({ label, k, cols = 1, cat, field, posField, itemKey }) => (
     <tr onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
       <td style={{ padding: '5px 10px', fontSize: 12, color: 'var(--text-primary)', border: '1px solid var(--border)' }}>{label}</td>
-      {cat ? (
+      {itemKey ? (
+        Array.from({ length: cols }).map((_, i) => {
+          const autoVal = getItemDefault(itemKey, i, cols);
+          const cellKey = `item_${itemKey}_${i}`;
+          const currentVal = overrides[cellKey] !== undefined ? overrides[cellKey] : autoVal;
+          const isPosCol = (cols === 2 && i === 1) || (cols === 3 && (i === 1 || i === 2));
+          return (
+            <td key={i} style={{ padding: '4px 6px', border: '1px solid var(--border)', textAlign: 'center' }}>
+              <input
+                value={currentVal}
+                onChange={e => setOverrides(p => ({ ...p, [cellKey]: e.target.value }))}
+                style={{
+                  width: 70,
+                  textAlign: 'center',
+                  padding: '3px 4px',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  color: isPosCol && Number(currentVal) > 0 ? 'var(--danger)' : Number(currentVal) > 0 ? 'var(--accent)' : 'var(--text-muted)',
+                  fontSize: 13,
+                  fontWeight: Number(currentVal) > 0 ? 700 : 400,
+                  outline: 'none'
+                }}
+              />
+            </td>
+          );
+        })
+      ) : cat ? (
         <>
           <td style={{ padding: '4px 6px', border: '1px solid var(--border)', textAlign: 'center' }}>
             <AutoCell cat={cat} field={field || 'completed'} />
@@ -659,88 +704,88 @@ const MOH706Report = ({ user }) => {
                 <tbody>
                   <SectionHeader num="1" title="URINE ANALYSIS" />
                   <SubHeader label="Urine Chemistry" cols={['Total Exam', 'Positive']} />
-                  <Row label="1.1 Urine Chemistry (Total)" cat="urinalysis" field="completed" posField="positive" />
-                  <Row label="1.2 Glucose" k="u2" cols={2} />
-                  <Row label="1.3 Ketones" k="u3" cols={2} />
-                  <Row label="1.4 Proteins" k="u4" cols={2} />
+                  <Row label="1.1 Urine Chemistry (Total)" k="u1" cols={2} itemKey="u_chem_total" />
+                  <Row label="1.2 Glucose" k="u2" cols={2} itemKey="u_glucose" />
+                  <Row label="1.3 Ketones" k="u3" cols={2} itemKey="u_ketones" />
+                  <Row label="1.4 Proteins" k="u4" cols={2} itemKey="u_proteins" />
                   <SubHeader label="Urine Microscopy" cols={['Total Exam', 'Positive']} />
-                  <Row label="1.5 Urine Microscopy (Total)" k="um0" cols={2} />
-                  <Row label="1.6 Pus cells (>5/hpf)" k="um1" cols={2} />
-                  <Row label="1.7 S. haematobium" k="um2" cols={2} />
-                  <Row label="1.8 T. vaginalis" k="um3" cols={2} />
-                  <Row label="1.9 Yeast cells" k="um4" cols={2} />
-                  <Row label="1.10 Bacteria" k="um5" cols={2} />
+                  <Row label="1.5 Urine Microscopy (Total)" k="um0" cols={2} itemKey="u_micro_total" />
+                  <Row label="1.6 Pus cells (>5/hpf)" k="um1" cols={2} itemKey="u_pus_cells" />
+                  <Row label="1.7 S. haematobium" k="um2" cols={2} itemKey="u_haematobium" />
+                  <Row label="1.8 T. vaginalis" k="um3" cols={2} itemKey="u_tvaginalis" />
+                  <Row label="1.9 Yeast cells" k="um4" cols={2} itemKey="u_yeast" />
+                  <Row label="1.10 Bacteria" k="um5" cols={2} itemKey="u_bacteria" />
 
                   <SectionHeader num="2" title="BLOOD CHEMISTRY" />
                   <SubHeader label="Blood Sugar Test" cols={['Total Exam', 'Low', 'High']} />
-                  <Row label="2.1 Blood Sugar (RBS/FBS)" k="bs1" cols={3} />
-                  <Row label="2.2 OGTT" k="bs2" cols={3} />
+                  <Row label="2.1 Blood Sugar (RBS/FBS)" k="bs1" cols={3} itemKey="blood_sugar" />
+                  <Row label="2.2 OGTT" k="bs2" cols={3} itemKey="ogtt" />
                   <SubHeader label="Renal Function Test" cols={['Total Exam', 'Positive']} />
-                  <Row label="2.3 Renal Function (UECS - Total)" cat="chemistry" field="completed" posField="positive" />
-                  <Row label="2.4 Creatinine" k="rf1" cols={2} />
-                  <Row label="2.5 Urea" k="rf2" cols={2} />
-                  <Row label="2.5 Sodium" k="rf3" cols={2} />
-                  <Row label="2.6 Potassium" k="rf4" cols={2} />
-                  <Row label="2.7 Chlorides" k="rf5" cols={2} />
+                  <Row label="2.3 Renal Function (UECS - Total)" k="rf0" cols={2} itemKey="uecs_total" />
+                  <Row label="2.4 Creatinine" k="rf1" cols={2} itemKey="creatinine" />
+                  <Row label="2.5 Urea" k="rf2" cols={2} itemKey="urea" />
+                  <Row label="2.5 Sodium" k="rf3" cols={2} itemKey="sodium" />
+                  <Row label="2.6 Potassium" k="rf4" cols={2} itemKey="potassium" />
+                  <Row label="2.7 Chlorides" k="rf5" cols={2} itemKey="chlorides" />
                   <SubHeader label="Liver Function Test" cols={['Total Exam', 'Positive']} />
-                  <Row label="2.8 LFT Total" k="lft0" cols={2} />
-                  <Row label="2.9 Direct Bilirubin" k="lft1" cols={2} />
-                  <Row label="2.10 Total Bilirubin" k="lft2" cols={2} />
-                  <Row label="2.11 ASAT (SGOT)" k="lft3" cols={2} />
-                  <Row label="2.12 ALAT (SGPT)" k="lft4" cols={2} />
-                  <Row label="2.13 Serum Protein" k="lft5" cols={2} />
-                  <Row label="2.14 Albumin" k="lft6" cols={2} />
-                  <Row label="2.15 Alkaline Phosphatase" k="lft7" cols={2} />
+                  <Row label="2.8 LFT Total" k="lft0" cols={2} itemKey="lft_total" />
+                  <Row label="2.9 Direct Bilirubin" k="lft1" cols={2} itemKey="direct_bilirubin" />
+                  <Row label="2.10 Total Bilirubin" k="lft2" cols={2} itemKey="total_bilirubin" />
+                  <Row label="2.11 ASAT (SGOT)" k="lft3" cols={2} itemKey="ast_sgot" />
+                  <Row label="2.12 ALAT (SGPT)" k="lft4" cols={2} itemKey="alt_sgpt" />
+                  <Row label="2.13 Serum Protein" k="lft5" cols={2} itemKey="serum_protein" />
+                  <Row label="2.14 Albumin" k="lft6" cols={2} itemKey="albumin" />
+                  <Row label="2.15 Alkaline Phosphatase" k="lft7" cols={2} itemKey="alp" />
                   <SubHeader label="Lipid Profile" cols={['Total Exam', 'Positive']} />
-                  <Row label="2.16 Lipid Profile Total" k="lp0" cols={2} />
-                  <Row label="2.17 Total Cholesterol" k="lp1" cols={2} />
-                  <Row label="2.18 Triglycerides" k="lp2" cols={2} />
-                  <Row label="2.19 LDL" k="lp3" cols={2} />
+                  <Row label="2.16 Lipid Profile Total" k="lp0" cols={2} itemKey="lipid_total" />
+                  <Row label="2.17 Total Cholesterol" k="lp1" cols={2} itemKey="cholesterol" />
+                  <Row label="2.18 Triglycerides" k="lp2" cols={2} itemKey="triglycerides" />
+                  <Row label="2.19 LDL" k="lp3" cols={2} itemKey="ldl" />
                   <SubHeader label="Hormonal Test" cols={['Total Exam', 'Low', 'High']} />
-                  <Row label="2.20 T3" k="ht1" cols={3} />
-                  <Row label="2.21 T4" k="ht2" cols={3} />
-                  <Row label="2.22 TSH" k="ht3" cols={3} />
+                  <Row label="2.20 T3" k="ht1" cols={3} itemKey="t3" />
+                  <Row label="2.21 T4" k="ht2" cols={3} itemKey="t4" />
+                  <Row label="2.22 TSH" k="ht3" cols={3} itemKey="tsh" />
                   <SubHeader label="Tumor Markers" cols={['Total Exam', 'Positive']} />
-                  <Row label="2.23 PSA" k="tm1" cols={2} />
-                  <Row label="2.24 CA 15-3" k="tm2" cols={2} />
-                  <Row label="2.25 CA 19-9" k="tm3" cols={2} />
-                  <Row label="2.26 CA 125" k="tm4" cols={2} />
-                  <Row label="2.27 CEA" k="tm5" cols={2} />
-                  <Row label="2.28 AFP" k="tm6" cols={2} />
+                  <Row label="2.23 PSA" k="tm1" cols={2} itemKey="psa" />
+                  <Row label="2.24 CA 15-3" k="tm2" cols={2} itemKey="ca15_3" />
+                  <Row label="2.25 CA 19-9" k="tm3" cols={2} itemKey="ca19_9" />
+                  <Row label="2.26 CA 125" k="tm4" cols={2} itemKey="ca125" />
+                  <Row label="2.27 CEA" k="tm5" cols={2} itemKey="cea" />
+                  <Row label="2.28 AFP" k="tm6" cols={2} itemKey="afp" />
                   <SubHeader label="CSF Chemistry" cols={['Total Exam', 'Low', 'High']} />
-                  <Row label="2.29 CSF Proteins" k="csf1" cols={3} />
-                  <Row label="2.30 CSF Glucose" k="csf2" cols={3} />
+                  <Row label="2.29 CSF Proteins" k="csf1" cols={3} itemKey="csf_proteins" />
+                  <Row label="2.30 CSF Glucose" k="csf2" cols={3} itemKey="csf_glucose" />
 
                   <SectionHeader num="3" title="PARASITOLOGY" />
                   <SubHeader label="Malaria Test" cols={['Total Exam', 'Number Positive']} />
-                  <Row label="3.1 Malaria BS (Under 5 years)" k="mal1" cols={2} />
-                  <Row label="3.2 Malaria BS (5 years and above)" k="mal2" cols={2} />
-                  <Row label="3.3 Malaria RDT (Under 5 years)" k="mal3" cols={2} />
-                  <Row label="3.4 Malaria RDT (5 years and above)" k="mal4" cols={2} />
+                  <Row label="3.1 Malaria BS (Under 5 years)" k="mal1" cols={2} itemKey="malaria_bs_u5" />
+                  <Row label="3.2 Malaria BS (5 years and above)" k="mal2" cols={2} itemKey="malaria_bs_o5" />
+                  <Row label="3.3 Malaria RDT (Under 5 years)" k="mal3" cols={2} itemKey="malaria_rdt_u5" />
+                  <Row label="3.4 Malaria RDT (5 years and above)" k="mal4" cols={2} itemKey="malaria_rdt_o5" />
                   <SubHeader label="Stool Examination" cols={['Total Exam', 'Number Positive']} />
-                  <Row label="3.5 Taenia spp." k="st1" cols={2} />
-                  <Row label="3.6 Hymenolepis nana" k="st2" cols={2} />
-                  <Row label="3.7 Hookworm" k="st3" cols={2} />
-                  <Row label="3.8 Roundworms" k="st4" cols={2} />
-                  <Row label="3.9 S. mansoni" k="st5" cols={2} />
-                  <Row label="3.10 Trichuris trichura" k="st6" cols={2} />
-                  <Row label="3.11 Amoeba" k="st7" cols={2} />
+                  <Row label="3.5 Taenia spp." k="st1" cols={2} itemKey="taenia" />
+                  <Row label="3.6 Hymenolepis nana" k="st2" cols={2} itemKey="h_nana" />
+                  <Row label="3.7 Hookworm" k="st3" cols={2} itemKey="hookworm" />
+                  <Row label="3.8 Roundworms" k="st4" cols={2} itemKey="roundworms" />
+                  <Row label="3.9 S. mansoni" k="st5" cols={2} itemKey="s_mansoni" />
+                  <Row label="3.10 Trichuris trichura" k="st6" cols={2} itemKey="trichuris" />
+                  <Row label="3.11 Amoeba" k="st7" cols={2} itemKey="amoeba" />
 
                   <SectionHeader num="4" title="HAEMATOLOGY" />
                   <SubHeader label="Haematology Tests" cols={['Total Exam', 'HB <5 g/dl', 'HB 5-10 g/dl']} />
-                  <Row label="4.1 Full Blood Count (FBC)" cat="haematology" field="completed" posField="positive" />
-                  <Row label="4.2 HB Estimation (other techniques)" k="hb2" cols={3} />
-                  <Row label="4.3 Hemoglobin A1c (HbA1c)" k="hba1c" cols={3} />
+                  <Row label="4.1 Full Blood Count (FBC)" k="fbc1" cols={3} itemKey="cbc_fbc" />
+                  <Row label="4.2 HB Estimation (other techniques)" k="hb2" cols={3} itemKey="hb_estimation" />
+                  <Row label="4.3 Hemoglobin A1c (HbA1c)" k="hba1c" cols={3} itemKey="hba1c" />
                   <SubHeader label="Other Haematology Tests" cols={['Total Exam', 'Positive']} />
-                  <Row label="4.4 CD4 Count" k="cd4" cols={2} />
-                  <Row label="4.5 Sickling Test" k="sickle" cols={2} />
-                  <Row label="4.6 Peripheral Blood Films" k="pbf" cols={2} />
+                  <Row label="4.4 CD4 Count" k="cd4" cols={2} itemKey="cd4" />
+                  <Row label="4.5 Sickling Test" k="sickle" cols={2} itemKey="sickling" />
+                  <Row label="4.6 Peripheral Blood Films" k="pbf" cols={2} itemKey="pbf" />
                   <Row label="4.7 BMA" k="bma" cols={2} />
-                  <Row label="4.8 Coagulation Profile" k="coag" cols={2} />
-                  <Row label="4.9 Reticulocyte Count" k="retic" cols={2} />
-                  <Row label="4.10 ESR" k="esr" cols={2} />
+                  <Row label="4.8 Coagulation Profile" k="coag" cols={2} itemKey="coagulation" />
+                  <Row label="4.9 Reticulocyte Count" k="retic" cols={2} itemKey="reticulocytes" />
+                  <Row label="4.10 ESR" k="esr" cols={2} itemKey="esr" />
                   <SubHeader label="Blood Grouping" cols={['Total Exam', 'Number']} />
-                  <Row label="4.11 Total Blood Group Tests" k="bg1" cols={2} />
+                  <Row label="4.11 Total Blood Group Tests" k="bg1" cols={2} itemKey="blood_group" />
                   <Row label="4.12 Blood Units Grouped" k="bg2" cols={2} />
                   <SubHeader label="Blood Safety" cols={['Number']} />
                   <Row label="4.13 Blood Units Received from Blood Transfusion Centres" k="bs_1" cols={1} />
@@ -757,18 +802,18 @@ const MOH706Report = ({ user }) => {
 
                   <SectionHeader num="5" title="BACTERIOLOGY" />
                   <SubHeader label="Bacteriological Sample" cols={['Total Exam', 'Total Cultures', 'Culture Positive']} />
-                  <Row label="5.1 Urine" k="bac1" cols={3} />
-                  <Row label="5.2 Pus Swabs" k="bac2" cols={3} />
-                  <Row label="5.3 High Vaginal Swabs (HVS)" k="bac3" cols={3} />
-                  <Row label="5.4 Throat Swab" k="bac4" cols={3} />
-                  <Row label="5.5 Rectal Swab" k="bac5" cols={3} />
-                  <Row label="5.6 Blood" k="bac6" cols={3} />
-                  <Row label="5.7 Water" k="bac7" cols={3} />
-                  <Row label="5.8 Food" k="bac8" cols={3} />
-                  <Row label="5.9 Urethral Swabs" k="bac9" cols={3} />
-                  <Row label="5.10 Stool Cultures" k="bac10" cols={3} />
+                  <Row label="5.1 Urine" k="bac1" cols={3} itemKey="bac_urine" />
+                  <Row label="5.2 Pus Swabs" k="bac2" cols={3} itemKey="bac_pus" />
+                  <Row label="5.3 High Vaginal Swabs (HVS)" k="bac3" cols={3} itemKey="bac_hvs" />
+                  <Row label="5.4 Throat Swab" k="bac4" cols={3} itemKey="bac_throat" />
+                  <Row label="5.5 Rectal Swab" k="bac5" cols={3} itemKey="bac_rectal" />
+                  <Row label="5.6 Blood" k="bac6" cols={3} itemKey="bac_blood" />
+                  <Row label="5.7 Water" k="bac7" cols={3} itemKey="bac_water" />
+                  <Row label="5.8 Food" k="bac8" cols={3} itemKey="bac_food" />
+                  <Row label="5.9 Urethral Swabs" k="bac9" cols={3} itemKey="bac_urethral" />
+                  <Row label="5.10 Stool Cultures" k="bac10" cols={3} itemKey="bac_stool" />
                   <SubHeader label="SPUTUM / TB" cols={['Total Exam', 'Number Positive']} />
-                  <Row label="5.29 Total TB Smears" cat="bacteriology" field="completed" posField="positive" />
+                  <Row label="5.29 Total TB Smears" k="tb1" cols={2} itemKey="tb_smear" />
                   <Row label="5.30 New Presumptive TB Cases" k="tb2" cols={2} />
                   <Row label="5.31 TB Follow Up" k="tb3" cols={2} />
                   <Row label="5.32 Rifampicin Resistant TB" k="tb4" cols={2} />
@@ -791,18 +836,18 @@ const MOH706Report = ({ user }) => {
 
                   <SectionHeader num="7" title="SEROLOGY" />
                   <SubHeader label="Serological Tests" cols={['Total Exam', 'Number Positive']} />
-                  <Row label="7.1 VDRL" k="ser1" cols={2} />
-                  <Row label="7.2 TPHA" k="ser2" cols={2} />
-                  <Row label="7.3 ASOT" k="ser3" cols={2} />
-                  <Row label="7.4 HIV" cat="serology" field="completed" posField="positive" />
-                  <Row label="7.5 Brucella" k="ser5" cols={2} />
-                  <Row label="7.6 Rheumatoid Factor (RF)" k="ser6" cols={2} />
-                  <Row label="7.7 Helicobacter pylori" k="ser7" cols={2} />
-                  <Row label="7.8 Hepatitis A" k="ser8" cols={2} />
-                  <Row label="7.9 Hepatitis B" k="ser9" cols={2} />
-                  <Row label="7.10 Hepatitis C" k="ser10" cols={2} />
-                  <Row label="7.11 HCG (Pregnancy Test)" k="ser11" cols={2} />
-                  <Row label="7.12 CRAG Test" k="ser12" cols={2} />
+                  <Row label="7.1 VDRL" k="ser1" cols={2} itemKey="vdrl" />
+                  <Row label="7.2 TPHA" k="ser2" cols={2} itemKey="tpha" />
+                  <Row label="7.3 ASOT" k="ser3" cols={2} itemKey="asot" />
+                  <Row label="7.4 HIV" k="ser4" cols={2} itemKey="hiv" />
+                  <Row label="7.5 Brucella" k="ser5" cols={2} itemKey="brucella" />
+                  <Row label="7.6 Rheumatoid Factor (RF)" k="ser6" cols={2} itemKey="rf" />
+                  <Row label="7.7 Helicobacter pylori" k="ser7" cols={2} itemKey="h_pylori" />
+                  <Row label="7.8 Hepatitis A" k="ser8" cols={2} itemKey="hep_a" />
+                  <Row label="7.9 Hepatitis B" k="ser9" cols={2} itemKey="hep_b" />
+                  <Row label="7.10 Hepatitis C" k="ser10" cols={2} itemKey="hep_c" />
+                  <Row label="7.11 HCG (Pregnancy Test)" k="ser11" cols={2} itemKey="hcg_pregnancy" />
+                  <Row label="7.12 CRAG Test" k="ser12" cols={2} itemKey="crag" />
 
                   <SectionHeader num="8" title="SPECIMEN REFERRAL TO HIGHER LEVELS" />
                   <SubHeader label="Referral Type" cols={['Specimens Referred', 'Results Received']} />
@@ -1170,6 +1215,11 @@ export default function LabPage() {
       r.technician_name?.toLowerCase().includes(q) ||
       r.visit_number?.toLowerCase().includes(q)
     );
+  }).sort((a, b) => {
+    const timeA = new Date(a.created_at || a.requested_at || 0).getTime();
+    const timeB = new Date(b.created_at || b.requested_at || 0).getTime();
+    if (timeB !== timeA) return timeB - timeA;
+    return String(b.id || '').localeCompare(String(a.id || ''));
   });
 
   // ── DETAIL VIEW ──────────────────────────────────────────────────────────────

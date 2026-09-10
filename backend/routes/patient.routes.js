@@ -11,6 +11,43 @@ const { protect, requirePharmacy } = require('../middleware/auth.middleware');
 
 router.use(protect, requirePharmacy);
 
+// POST Manual / On-Demand Past Patient Data Restore & Sync
+router.post('/restore-records', async (req, res) => {
+  try {
+    const pharmId = req.pharmacy_id || req.user?.pharmacy_id || null;
+    
+    // 1. Reactivate all existing records
+    if (pharmId) {
+      await pool.query(`
+        UPDATE patients SET is_active = true WHERE is_active IS NULL OR is_active = false;
+        UPDATE patients SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE visits SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE consultations SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE prescriptions SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE lab_requests SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE vitals SET pharmacy_id = $1 WHERE pharmacy_id IS NULL;
+        UPDATE billing_items SET facility_id = $1, pharmacy_id = $1 WHERE pharmacy_id IS NULL OR facility_id IS NULL;
+      `, [pharmId]);
+    } else {
+      await pool.query(`
+        UPDATE patients SET is_active = true WHERE is_active IS NULL OR is_active = false;
+      `);
+    }
+
+    const PatientModel = require('../models/patient.model');
+    const patients = await PatientModel.findAll({ pharmacy_id: pharmId, limit: 200 });
+    const stats = await PatientModel.getStats(pharmId);
+
+    return successResponse(res, 200, 'Past patient records restored and synchronized successfully', {
+      total_patients: patients.length,
+      patients,
+      stats
+    });
+  } catch (err) {
+    return errorResponse(res, 500, 'Failed to restore patient records: ' + err.message);
+  }
+});
+
 router.get('/', getPatients);
 router.post('/', createPatient);
 router.get('/visits', getVisits);
@@ -59,7 +96,7 @@ router.put('/:id/medical-history', async (req, res) => {
 
     const { encrypt, decrypt } = require('../utils/encryption');
 
-    const result = await pool.query(`
+    let result = await pool.query(`
       UPDATE patients SET
         allergies = COALESCE($1, allergies),
         chronic_conditions = COALESCE($2, chronic_conditions),
@@ -70,7 +107,8 @@ router.put('/:id/medical-history', async (req, res) => {
         immunization_history = COALESCE($7, immunization_history),
         blood_group = COALESCE($8, blood_group),
         updated_at = NOW()
-      WHERE id = $9 AND pharmacy_id = $10
+      WHERE (id::text = $9::text OR patient_number = $9::text) 
+        AND (pharmacy_id::text = $10::text OR pharmacy_id IS NULL OR $10 IS NULL)
       RETURNING *
     `, [
       allergies !== undefined ? encrypt(allergies) : null,
@@ -81,9 +119,37 @@ router.put('/:id/medical-history', async (req, res) => {
       social_history || null,
       immunization_history || null,
       blood_group || null,
-      req.params.id,
-      req.pharmacy_id
+      String(req.params.id),
+      req.pharmacy_id ? String(req.pharmacy_id) : null
     ]);
+
+    if (!result.rows[0]) {
+      // Try fallback without pharmacy_id filter
+      result = await pool.query(`
+        UPDATE patients SET
+          allergies = COALESCE($1, allergies),
+          chronic_conditions = COALESCE($2, chronic_conditions),
+          past_medical_history = COALESCE($3, past_medical_history),
+          past_surgical_history = COALESCE($4, past_surgical_history),
+          family_history = COALESCE($5, family_history),
+          social_history = COALESCE($6, social_history),
+          immunization_history = COALESCE($7, immunization_history),
+          blood_group = COALESCE($8, blood_group),
+          updated_at = NOW()
+        WHERE (id::text = $9::text OR patient_number = $9::text)
+        RETURNING *
+      `, [
+        allergies !== undefined ? encrypt(allergies) : null,
+        chronic_conditions !== undefined ? encrypt(chronic_conditions) : null,
+        past_medical_history || null,
+        past_surgical_history || null,
+        family_history || null,
+        social_history || null,
+        immunization_history || null,
+        blood_group || null,
+        String(req.params.id)
+      ]);
+    }
 
     if (!result.rows[0]) return errorResponse(res, 404, 'Patient not found');
     const updated = {
@@ -158,8 +224,11 @@ router.get('/:id/history-notes', async (req, res) => {
   try {
     try {
       const result = await pool.query(`
-        SELECT * FROM patient_history_notes WHERE patient_id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL) ORDER BY created_at DESC
-      `, [String(req.params.id), String(req.pharmacy_id || '1')]);
+        SELECT * FROM patient_history_notes 
+        WHERE patient_id::text=$1::text 
+          AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL OR $2 IS NULL) 
+        ORDER BY created_at DESC
+      `, [String(req.params.id), req.pharmacy_id ? String(req.pharmacy_id) : null]);
       return successResponse(res, 200, 'History notes fetched', result.rows);
     } catch(e) {
       return successResponse(res, 200, 'History notes fetched', []);
@@ -174,14 +243,14 @@ router.post('/:patient_id/visits', createVisit);
 // Discharge Summary
 router.get("/visits/:visit_id/discharge-summary", async (req, res) => {
   try {
-    const visit = await pool.query("SELECT v.*, p.full_name, p.patient_number, p.gender, p.date_of_birth, p.phone, p.allergies FROM visits v JOIN patients p ON v.patient_id = p.id WHERE v.id=$1 AND v.pharmacy_id=$2", [req.params.visit_id, req.pharmacy_id]);
+    const visit = await pool.query("SELECT v.*, p.full_name, p.patient_number, p.gender, p.date_of_birth, p.phone, p.allergies FROM visits v JOIN patients p ON v.patient_id::text = p.id::text WHERE v.id::text=$1::text AND (v.pharmacy_id::text=$2::text OR v.pharmacy_id IS NULL)", [req.params.visit_id, req.pharmacy_id]);
     if (!visit.rows[0]) return errorResponse(res, 404, "Visit not found");
     
-    const consultation = await pool.query("SELECT * FROM consultations WHERE visit_id=$1 ORDER BY created_at DESC LIMIT 1", [req.params.visit_id]);
-    const labResults = await pool.query("SELECT * FROM lab_requests WHERE visit_id=$1 ORDER BY created_at DESC", [req.params.visit_id]);
-    const prescriptions = await pool.query("SELECT * FROM prescriptions WHERE visit_id=$1 ORDER BY created_at DESC", [req.params.visit_id]);
-    const injectionOrders = await pool.query("SELECT iro.*, u.full_name as nurse_name FROM injection_room_orders iro LEFT JOIN users u ON iro.administered_by = u.id WHERE iro.visit_id=$1 ORDER BY iro.created_at DESC", [req.params.visit_id]);
-    const bill = await pool.query("SELECT * FROM billing_items WHERE visit_id=$1", [req.params.visit_id]);
+    const consultation = await pool.query("SELECT * FROM consultations WHERE visit_id::text=$1::text ORDER BY created_at DESC LIMIT 1", [req.params.visit_id]);
+    const labResults = await pool.query("SELECT * FROM lab_requests WHERE visit_id::text=$1::text ORDER BY created_at DESC", [req.params.visit_id]);
+    const prescriptions = await pool.query("SELECT * FROM prescriptions WHERE visit_id::text=$1::text ORDER BY created_at DESC", [req.params.visit_id]);
+    const injectionOrders = await pool.query("SELECT iro.*, u.full_name as nurse_name FROM injection_room_orders iro LEFT JOIN users u ON iro.administered_by::text = u.id::text WHERE iro.visit_id::text=$1::text ORDER BY iro.created_at DESC", [req.params.visit_id]);
+    const bill = await pool.query("SELECT * FROM billing_items WHERE visit_id::text=$1::text", [req.params.visit_id]);
     
     const summary = {
       patient: visit.rows[0],

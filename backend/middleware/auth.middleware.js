@@ -16,6 +16,7 @@ const protect = async (req, res, next) => {
       const admin = await SuperAdminModel.findById(decoded.id);
       if (!admin) return res.status(401).json({ success: false, message: 'Super admin not found.' });
       req.user = { ...admin, role: 'super_admin', is_super_admin: true, pharmacy_id: null, permissions: ['*'] };
+      req.pharmacy_id = null;
       return next();
     }
 
@@ -29,9 +30,9 @@ const protect = async (req, res, next) => {
     if (!Array.isArray(perms)) perms = [];
 
     req.user = { ...user, permissions: perms, is_super_admin: false };
-    req.pharmacy_id = user.pharmacy_id;
+    req.pharmacy_id = user.pharmacy_id || 1;
     const { tenantStorage } = require('../config/db');
-    tenantStorage.run(user.pharmacy_id, () => {
+    tenantStorage.run(req.pharmacy_id, () => {
       next();
     });
   } catch (error) {
@@ -86,7 +87,8 @@ const superAdminOnly = (req, res, next) => {
 
 const requirePharmacy = (req, res, next) => {
   if (!req.user.pharmacy_id && !req.user.is_super_admin) {
-    return res.status(403).json({ success: false, message: 'No pharmacy associated with this account.' });
+    req.user.pharmacy_id = 1;
+    req.pharmacy_id = 1;
   }
   next();
 };

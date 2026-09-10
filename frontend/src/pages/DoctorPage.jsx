@@ -10,7 +10,7 @@ import ICD10Search from '../components/ICD10Search';
 import CDSAlertModal from '../components/CDSAlertModal';
 import {
   Stethoscope, ArrowLeft, Plus, X, Loader, FlaskConical,
-  RefreshCw, Send, CheckCircle, Search, ChevronRight, Clipboard, Printer, ShieldAlert
+  RefreshCw, Send, CheckCircle, Search, ChevronRight, Clipboard, Printer, ShieldAlert, Calendar
 } from 'lucide-react';
 import { printTreatmentSummary } from '../utils/printTreatmentSummary';
 import { printLabResult } from '../utils/printLabResult';
@@ -137,7 +137,11 @@ export default function DoctorPage() {
 
   const [view, setView]         = useState(searchParams.get('tab') || 'queue');
   const [queueTab, setQueueTab] = useState('active');
-  const [queueDate, setQueueDate] = useState(new Date().toISOString().split('T')[0]);
+  const today = new Date().toISOString().split('T')[0];
+  const [queueDateFrom, setQueueDateFrom] = useState(today);
+  const [queueDateTo, setQueueDateTo]     = useState(today);
+  const [queueAllDates, setQueueAllDates] = useState(false);
+  const [queueDate, setQueueDate] = useState(today);
   const [queue, setQueue]       = useState([]);
   const [search, setSearch]     = useState('');
   const [loading, setLoading]   = useState(true);
@@ -253,7 +257,7 @@ export default function DoctorPage() {
       }
       clearInterval(interval);
     };
-  }, [user?.pharmacy_id, queueTab, queueDate]);
+  }, [user?.pharmacy_id, queueTab, queueDateFrom, queueDateTo, queueAllDates]);
 
   useEffect(() => {
     const tab = searchParams.get('tab') || 'queue';
@@ -337,11 +341,17 @@ export default function DoctorPage() {
   const fetchQueue = async () => {
     setLoading(true);
     try {
-      const d = queueDate || new Date().toISOString().split('T')[0];
-      const url = queueTab === 'active'
-        ? `/visits?status=opd_queue&date=${d}`
-        : `/visits?date=${d}`;
-      const res = await api.get(url);
+      const params = new URLSearchParams();
+      if (queueTab === 'active') {
+        params.append('status', 'opd_queue');
+      }
+      if (queueAllDates) {
+        params.append('all_dates', 'true');
+      } else {
+        if (queueDateFrom) params.append('date_from', queueDateFrom);
+        if (queueDateTo) params.append('date_to', queueDateTo);
+      }
+      const res = await api.get(`/visits?${params.toString()}`);
       setQueue(res.data.data || []);
     } catch { toast.error('Failed to load queue'); }
     finally { setLoading(false); }
@@ -520,7 +530,8 @@ export default function DoctorPage() {
       // fetch lab results separately
       try {
         const lrRes = await api.get(`/consultations/visit/${visit.id}/lab-results`);
-        setLabResults(lrRes.data?.data || []);
+        const labs = (lrRes.data?.data || []).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+        setLabResults(labs);
       } catch {
         setLabResults([]);
       }
@@ -923,7 +934,8 @@ export default function DoctorPage() {
     if (!selectedVisit) return;
     try {
       const r = await api.get(`/consultations/visit/${selectedVisit.id}/lab-results`);
-      setLabResults(r.data.data || []);
+      const labs = (r.data.data || []).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      setLabResults(labs);
       toast.success('Lab results refreshed');
     } catch { toast.error('Failed to refresh'); }
   };
@@ -1232,22 +1244,127 @@ export default function DoctorPage() {
         </div>
       </div>
 
-      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
-        <div style={{ position:'relative', flex:1, minWidth:200 }}>
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems: 'center' }}>
+        <div style={{ position:'relative', flex:1, minWidth:220 }}>
           <Search size={16} style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}/>
           <input value={search} onChange={e=>setSearch(e.target.value)}
             placeholder="Search by name, patient number or phone..."
             style={{ width:'100%', padding:'10px 10px 10px 38px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none', boxSizing:'border-box' }}/>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="date" value={queueDate}
-            onChange={e => setQueueDate(e.target.value)}
-            style={{ padding:'10px 12px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none' }}/>
-          {queueDate && (
-            <button onClick={() => setQueueDate('')} style={{ padding:'8px 12px', background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer' }}>
-              Clear
+
+        {/* OPD Date Range Filter Toolbar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '6px 12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Calendar size={15} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>Queue Filter:</span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 4, background: 'var(--bg-elevated)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setQueueAllDates(false);
+                setQueueDateFrom(today);
+                setQueueDateTo(today);
+              }}
+              style={{
+                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: !queueAllDates && queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                color: !queueAllDates && queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+              }}
+            >
+              Today
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => {
+                const y = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                setQueueAllDates(false);
+                setQueueDateFrom(y);
+                setQueueDateTo(y);
+              }}
+              style={{
+                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: !queueAllDates && queueDateFrom === new Date(Date.now() - 86400000).toISOString().split('T')[0] && queueDateTo === new Date(Date.now() - 86400000).toISOString().split('T')[0] ? 'var(--accent)' : 'transparent',
+                color: !queueAllDates && queueDateFrom === new Date(Date.now() - 86400000).toISOString().split('T')[0] && queueDateTo === new Date(Date.now() - 86400000).toISOString().split('T')[0] ? '#0F1612' : 'var(--text-muted)'
+              }}
+            >
+              Yesterday
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+                setQueueAllDates(false);
+                setQueueDateFrom(w);
+                setQueueDateTo(today);
+              }}
+              style={{
+                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                color: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+              }}
+            >
+              7 Days
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                const m = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+                setQueueAllDates(false);
+                setQueueDateFrom(m);
+                setQueueDateTo(today);
+              }}
+              style={{
+                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: !queueAllDates && queueDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
+                color: !queueAllDates && queueDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
+              }}
+            >
+              This Month
+            </button>
+            <button
+              type="button"
+              onClick={() => setQueueAllDates(true)}
+              style={{
+                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: queueAllDates ? 'var(--accent)' : 'transparent',
+                color: queueAllDates ? '#0F1612' : 'var(--text-muted)'
+              }}
+            >
+              All Dates
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
+            <input
+              type="date"
+              value={queueDateFrom}
+              onChange={e => {
+                setQueueAllDates(false);
+                const val = e.target.value;
+                setQueueDateFrom(val);
+                if (queueDateTo < val) setQueueDateTo(val);
+              }}
+              style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
+            <input
+              type="date"
+              value={queueDateTo}
+              onChange={e => {
+                setQueueAllDates(false);
+                const val = e.target.value;
+                setQueueDateTo(val);
+              }}
+              style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+            />
+          </div>
         </div>
       </div>
 
@@ -2675,9 +2792,9 @@ export default function DoctorPage() {
             {activeTab === 'history' && (
               <div className="space-y-4">
                 <ClinicalTimeline
-                  patientId={selectedVisit?.patient_id}
-                  patientName={selectedVisit?.patient_name}
-                  patientNumber={selectedVisit?.patient_number}
+                  patientId={selectedVisit?.patient_id || patient?.id}
+                  patientName={selectedVisit?.patient_name || patient?.full_name}
+                  patientNumber={selectedVisit?.patient_number || patient?.patient_number}
                 />
               </div>
             )}

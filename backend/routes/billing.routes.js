@@ -18,7 +18,7 @@ router.post('/visit/:visit_id/pay',   protect, payVisitBill);
 // Inpatient Bills (Cashier module)
 router.get('/inpatient-folder', protect, async (req, res) => {
   try {
-    const { status = 'all', search } = req.query;
+    const { status = 'all', search, date_from, date_to } = req.query;
     
     // First trigger bed charge sync for all active admissions
     const inpatientRoutes = require('./inpatient.routes');
@@ -28,8 +28,8 @@ router.get('/inpatient-folder', protect, async (req, res) => {
           SELECT DISTINCT v.id
           FROM visits v
           LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text
-          LEFT JOIN beds b ON b.current_visit_id = v.id
-          WHERE (v.pharmacy_id = $1 OR v.pharmacy_id IS NULL)
+          LEFT JOIN beds b ON b.current_visit_id::text = v.id::text
+          WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL)
             AND (v.status = 'inpatient' OR ia.status = 'admitted' OR (b.id IS NOT NULL AND b.status = 'occupied'))
         `, [req.pharmacy_id]);
 
@@ -41,7 +41,7 @@ router.get('/inpatient-folder', protect, async (req, res) => {
       }
     }
 
-    let whereSql = `WHERE (v.pharmacy_id = $1 OR v.pharmacy_id IS NULL) AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type,'')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL)`;
+    let whereSql = `WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL) AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type,'')) = 'inpatient' OR (ia.id IS NOT NULL AND ia.status = 'admitted') OR (b.id IS NOT NULL AND b.status = 'occupied'))`;
     const params = [req.pharmacy_id];
 
     if (status === 'admitted') {
@@ -53,6 +53,15 @@ router.get('/inpatient-folder', protect, async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       whereSql += ` AND (p.full_name ILIKE $${params.length} OR p.patient_number ILIKE $${params.length} OR w.name ILIKE $${params.length} OR v.visit_number ILIKE $${params.length})`;
+    }
+
+    if (date_from) {
+      params.push(date_from);
+      whereSql += ` AND DATE(v.created_at) >= $${params.length}`;
+    }
+    if (date_to) {
+      params.push(date_to);
+      whereSql += ` AND DATE(v.created_at) <= $${params.length}`;
     }
 
     const result = await pool.query(`
@@ -88,11 +97,11 @@ router.get('/inpatient-folder', protect, async (req, res) => {
         COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status = 'pending'), 0) AS pending_amount,
         COUNT(bi.id) AS total_items
       FROM visits v
-      JOIN patients p ON v.patient_id = p.id
+      JOIN patients p ON v.patient_id::text = p.id::text
       LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text
-      LEFT JOIN beds b ON b.current_visit_id = v.id
-      LEFT JOIN wards w ON b.ward_id = w.id
-      LEFT JOIN billing_items bi ON bi.visit_id = v.id
+      LEFT JOIN beds b ON b.current_visit_id::text = v.id::text
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
+      LEFT JOIN billing_items bi ON bi.visit_id::text = v.id::text
       ${whereSql}
       GROUP BY v.id, p.id, ia.id, w.name, b.bed_number
       ORDER BY v.created_at DESC
@@ -117,23 +126,27 @@ router.get('/queue', protect, async (req, res) => {
         UPDATE visits v
         SET fee_paid = true, payment_method = COALESCE(v.payment_method, bi.payment_method, 'cash'), updated_at = NOW()
         FROM billing_items bi
-        WHERE bi.visit_id = v.id
+        WHERE bi.visit_id::text = v.id::text
           AND bi.item_type IN ('consultation', 'mch')
           AND bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate', 'waived')
           AND v.fee_paid = false
-          AND (v.pharmacy_id = $1 OR v.pharmacy_id IS NULL)
+          AND (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL)
       `, [req.pharmacy_id]);
     } catch (syncErr) {
       console.error("Error auto-syncing visits fee_paid state in billing queue:", syncErr.message);
     }
 
     let whereConditions = [
-      `(v.pharmacy_id = $1 OR v.pharmacy_id IS NULL)`,
+      `($1::text IS NULL OR v.pharmacy_id::text = $1::text)`,
       `v.status NOT IN ('discharged', 'cancelled')`,
       `(
-        EXISTS (SELECT 1 FROM billing_items bi2 WHERE bi2.visit_id = v.id AND bi2.status = 'pending')
+        EXISTS (
+          SELECT 1 FROM billing_items bi2 
+          WHERE bi2.visit_id::text = v.id::text 
+            AND (bi2.status = 'pending' OR (bi2.status = 'partial' AND bi2.total_price > COALESCE(bi2.paid_amount, 0)))
+        )
         OR (
-          NOT EXISTS (SELECT 1 FROM billing_items bi2 WHERE bi2.visit_id = v.id)
+          NOT EXISTS (SELECT 1 FROM billing_items bi2 WHERE bi2.visit_id::text = v.id::text)
           AND COALESCE(v.fee_paid, false) = false
         )
       )`
@@ -156,15 +169,27 @@ router.get('/queue', protect, async (req, res) => {
       SELECT v.*, p.full_name as patient_name, p.patient_number, p.phone, p.gender, p.date_of_birth,
         w.name as ward_name, b.bed_number,
         (EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
-         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR b.id IS NOT NULL) AS is_inpatient,
-        COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status = 'pending'),0) AS pending_amount,
-        COALESCE(SUM(bi.total_price),0) AS total_amount,
-        COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'corporate')),0) AS paid_amount
+         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR (b.id IS NOT NULL AND b.status = 'occupied')) AS is_inpatient,
+        COALESCE(SUM(
+          CASE 
+            WHEN bi.status = 'pending' THEN bi.total_price
+            WHEN bi.status = 'partial' THEN GREATEST(0, bi.total_price - COALESCE(bi.paid_amount, 0))
+            ELSE 0
+          END
+        ), 0) AS pending_amount,
+        COALESCE(SUM(bi.total_price), 0) AS total_amount,
+        COALESCE(SUM(
+          CASE 
+            WHEN bi.status IN ('paid', 'insurance', 'sha', 'nhif', 'corporate', 'settled', 'cleared') THEN COALESCE(bi.paid_amount, bi.total_price)
+            WHEN bi.status = 'partial' THEN COALESCE(bi.paid_amount, 0)
+            ELSE 0
+          END
+        ), 0) AS paid_amount
       FROM visits v
-      JOIN patients p ON v.patient_id = p.id
-      LEFT JOIN billing_items bi ON bi.visit_id = v.id
-      LEFT JOIN beds b ON (b.current_visit_id = v.id)
-      LEFT JOIN wards w ON b.ward_id = w.id
+      JOIN patients p ON v.patient_id::text = p.id::text
+      LEFT JOIN billing_items bi ON bi.visit_id::text = v.id::text
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied')
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
       ${whereClause}
       GROUP BY v.id, p.full_name, p.patient_number, p.phone, p.gender, p.date_of_birth, w.name, b.bed_number, b.id
       ORDER BY v.created_at DESC
@@ -205,11 +230,12 @@ router.get('/payments', protect, async (req, res) => {
 // Patient Payment History (for receptionist to view & print combined receipts after discharge or during active visit)
 router.get('/patient-history', protect, async (req, res) => {
   try {
-    const { search, status, date_from, date_to, limit = 100 } = req.query;
+    const { search, status, date_from, date_to, all_dates, limit = 100 } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
     const today = new Date().toISOString().split('T')[0];
-    const dFrom = date_from || (search ? null : today);
-    const dTo = date_to || (search ? null : today);
-    let whereClause = `WHERE v.pharmacy_id = $1`;
+    const dFrom = isAllDates ? null : (date_from || (search ? null : today));
+    const dTo = isAllDates ? null : (date_to || (search ? null : today));
+    let whereClause = `WHERE ($1::text IS NULL OR v.pharmacy_id::text = $1::text)`;
     const params = [req.pharmacy_id];
 
     if (status) {
@@ -255,9 +281,21 @@ router.get('/patient-history', protect, async (req, res) => {
         p.gender,
         p.date_of_birth,
         COALESCE(SUM(bi.total_price), 0) AS total_billed,
-        COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')), 0) AS total_paid,
+        COALESCE(SUM(
+          CASE 
+            WHEN bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared') THEN COALESCE(bi.paid_amount, bi.total_price)
+            WHEN bi.status = 'partial' THEN COALESCE(bi.paid_amount, 0)
+            ELSE 0
+          END
+        ), 0) AS total_paid,
         COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status = 'waived'), 0) AS total_waived,
-        COALESCE(SUM(bi.total_price) FILTER (WHERE bi.status = 'pending'), 0) AS total_pending,
+        COALESCE(SUM(
+          CASE
+            WHEN bi.status = 'pending' THEN bi.total_price
+            WHEN bi.status = 'partial' THEN GREATEST(0, bi.total_price - COALESCE(bi.paid_amount, 0))
+            ELSE 0
+          END
+        ), 0) AS total_pending,
         JSON_AGG(
           JSON_BUILD_OBJECT(
             'id', bi.id,
@@ -267,6 +305,7 @@ router.get('/patient-history', protect, async (req, res) => {
             'quantity', bi.quantity,
             'unit_price', bi.unit_price,
             'total_price', bi.total_price,
+            'paid_amount', bi.paid_amount,
             'status', bi.status,
             'payment_method', bi.payment_method,
             'paid_at', bi.paid_at,
@@ -274,8 +313,8 @@ router.get('/patient-history', protect, async (req, res) => {
           ) ORDER BY bi.created_at ASC
         ) FILTER (WHERE bi.id IS NOT NULL) AS items
       FROM visits v
-      JOIN patients p ON v.patient_id = p.id
-      LEFT JOIN billing_items bi ON bi.visit_id = v.id
+      JOIN patients p ON v.patient_id::text = p.id::text
+      LEFT JOIN billing_items bi ON bi.visit_id::text = v.id::text
       ${whereClause}
       GROUP BY v.id, p.id
       ORDER BY v.created_at DESC

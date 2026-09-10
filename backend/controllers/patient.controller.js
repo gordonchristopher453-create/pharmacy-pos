@@ -7,7 +7,7 @@ const logger = require('../utils/logger');
 const getPatients = async (req, res) => {
   try {
     const { search, limit, offset } = req.query;
-    const patients = await PatientModel.findAll({ pharmacy_id: req.pharmacy_id, search, limit: parseInt(limit) || 50, offset: parseInt(offset) || 0 });
+    const patients = await PatientModel.findAll({ pharmacy_id: req.pharmacy_id, search, limit: parseInt(limit) || 200, offset: parseInt(offset) || 0 });
     const stats = await PatientModel.getStats(req.pharmacy_id);
     return successResponse(res, 200, 'Patients fetched', { patients, stats });
   } catch (error) {
@@ -192,8 +192,9 @@ const createVisit = async (req, res) => {
 
 const getVisits = async (req, res) => {
   try {
-    const { status, visit_type, date, date_from, date_to, limit, offset } = req.query;
-    const targetDate = (!date && !date_from && !date_to) ? new Date().toISOString().split('T')[0] : date;
+    const { status, visit_type, date, date_from, date_to, all_dates, limit, offset } = req.query;
+    const isAllDates = all_dates === 'true' || all_dates === true;
+    const targetDate = (!isAllDates && !date && !date_from && !date_to) ? new Date().toISOString().split('T')[0] : (isAllDates ? null : date);
     const visits = await VisitModel.findAll({ 
       pharmacy_id: req.pharmacy_id, 
       status, 
@@ -304,18 +305,15 @@ const addVitals = async (req, res) => {
 const getPatientHistory = async (req, res) => {
   try {
     const { search, date_from, date_to, limit = 1000, offset = 0 } = req.query;
-    const today = new Date().toISOString().split('T')[0];
-    const dFrom = date_from || (search ? null : today);
-    const dTo = date_to || (search ? null : today);
-    const params = [req.pharmacy_id];
+    const params = [req.pharmacy_id ? String(req.pharmacy_id) : null];
     let where = '';
     if (search) {
       params.push('%' + search + '%');
       const n = params.length;
-      where += ` AND (p.full_name ILIKE $${n} OR p.patient_number ILIKE $${n} OR p.phone ILIKE $${n})`;
+      where += ` AND (p.full_name ILIKE $${n} OR p.patient_number ILIKE $${n} OR p.phone ILIKE $${n} OR v.visit_number ILIKE $${n})`;
     }
-    if (dFrom) { params.push(dFrom); where += ` AND DATE(v.created_at) >= $${params.length}`; }
-    if (dTo)   { params.push(dTo);   where += ` AND DATE(v.created_at) <= $${params.length}`; }
+    if (date_from) { params.push(date_from); where += ` AND DATE(v.created_at) >= $${params.length}`; }
+    if (date_to)   { params.push(date_to);   where += ` AND DATE(v.created_at) <= $${params.length}`; }
     params.push(parseInt(limit));
     const li = params.length;
     params.push(parseInt(offset));
@@ -328,9 +326,9 @@ const getPatientHistory = async (req, res) => {
         c.id as consultation_id, u.full_name as doctor_name
       FROM visits v
       JOIN patients p ON v.patient_id = p.id
-      LEFT JOIN consultations c ON v.id = c.visit_id AND c.pharmacy_id = $1
+      LEFT JOIN consultations c ON v.id = c.visit_id
       LEFT JOIN users u ON c.doctor_id = u.id
-      WHERE v.pharmacy_id = $1 ${where}
+      WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL OR $1 IS NULL) ${where}
       ORDER BY v.created_at DESC
       LIMIT $${li} OFFSET $${oi}
     `;

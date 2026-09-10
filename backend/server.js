@@ -64,6 +64,7 @@ app.use('/api/sales',          protect, requirePharmacy, require('./routes/sale.
 app.use('/api/stock',          protect, requirePharmacy, require('./routes/stock.routes'));
 app.use('/api/stock-transfers',protect, requirePharmacy, require('./routes/stockTransfer.routes'));
 app.use('/api/finance',        protect, requirePharmacy, require('./routes/finance.routes'));
+app.use('/api/hr',             protect, requirePharmacy, require('./routes/hr.routes'));
 app.use('/api/reports',        protect, requirePharmacy, require('./routes/reports.routes'));
 app.use('/api/dashboard',      protect, requirePharmacy, require('./routes/dashboard.routes'));
 
@@ -188,7 +189,7 @@ const startExpiryChecker = () => {
   logger.info('⏰ Expiry checker scheduled (every 24h)');
 };
 
-const PORT = 3000; // Strictly listen on port 3000 as per runtime reverse-proxy routing
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   logger.info('================================');
   logger.info('💊 Medicare HMS Backend v2.0');

@@ -63,10 +63,17 @@ export default function ClinicalTimeline({ patientId, patientName, patientNumber
       if (diagnosisQuery.trim()) params.append('diagnosis', diagnosisQuery.trim());
       if (selectedStatus !== 'all') params.append('status', selectedStatus);
 
-      const [resTimeline, resNotes] = await Promise.all([
-        api.get(`/patients/${patientId}/timeline?${params.toString()}`),
-        api.get(`/patients/${patientId}/history-notes`).catch(() => ({ data: { data: [] } }))
-      ]);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+
+      let resTimeline;
+      try {
+        resTimeline = await api.get(`/patients/${patientId}/timeline${qs}`);
+      } catch (err1) {
+        // Fallback to encounters route
+        resTimeline = await api.get(`/encounters/patient/${patientId}/timeline${qs}`);
+      }
+
+      const resNotes = await api.get(`/patients/${patientId}/history-notes`).catch(() => ({ data: { data: [] } }));
 
       const payload = resTimeline.data?.data || {};
       setData(payload);
@@ -96,7 +103,7 @@ export default function ClinicalTimeline({ patientId, patientName, patientNumber
       }
     } catch (err) {
       console.error('Timeline error:', err);
-      toast.error('Failed to load clinical timeline');
+      toast.error(err.response?.data?.message || 'Failed to load clinical timeline');
     } finally {
       setLoading(false);
     }

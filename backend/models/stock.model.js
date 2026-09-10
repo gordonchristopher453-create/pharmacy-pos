@@ -18,7 +18,7 @@ class StockModel {
 
   static async findByProduct(product_id, pharmacy_id) {
     const result = await pool.query(`
-      SELECT * FROM stock WHERE product_id::text = $1::text AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL) AND quantity > 0
+      SELECT * FROM stock WHERE product_id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text) AND quantity > 0
       ORDER BY expiry_date ASC
     `, [product_id, pharmacy_id]);
     return result.rows;
@@ -28,7 +28,7 @@ class StockModel {
     const db = client || pool;
     const batches = await db.query(`
       SELECT * FROM stock
-      WHERE product_id::text = $1::text AND quantity > 0 AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL)
+      WHERE product_id::text = $1::text AND quantity > 0 AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
       ORDER BY expiry_date ASC NULLS LAST
     `, [product_id, pharmacy_id]);
 
@@ -46,7 +46,7 @@ class StockModel {
   static async getTotalStock(product_id, pharmacy_id) {
     const result = await pool.query(`
       SELECT COALESCE(SUM(quantity), 0) as total FROM stock
-      WHERE product_id::text = $1::text AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL)
+      WHERE product_id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
     `, [product_id, pharmacy_id]);
     return parseInt(result.rows[0].total);
   }
@@ -58,7 +58,7 @@ class StockModel {
       WHERE st.expiry_date <= NOW() + INTERVAL '${days} days'
         AND st.expiry_date >= NOW()
         AND st.quantity > 0
-        AND (st.pharmacy_id::text = $1::text OR st.pharmacy_id IS NULL)
+        AND ($1::text IS NULL OR st.pharmacy_id::text = $1::text)
       ORDER BY st.expiry_date ASC
     `, [pharmacy_id]);
     return result.rows;
@@ -73,7 +73,7 @@ class StockModel {
       LEFT JOIN categories c ON p.category_id::text = c.id::text
       WHERE st.expiry_date < NOW()
         AND st.quantity > 0
-        AND (st.pharmacy_id::text = $1::text OR st.pharmacy_id IS NULL)
+        AND ($1::text IS NULL OR st.pharmacy_id::text = $1::text)
       ORDER BY st.expiry_date ASC
     `, [pharmacy_id]);
     return result.rows;
@@ -86,7 +86,7 @@ class StockModel {
       const stockRes = await client.query(
         `SELECT st.*, p.name as product_name FROM stock st
          JOIN products p ON st.product_id::text = p.id::text
-         WHERE st.id::text = $1::text AND (st.pharmacy_id::text = $2::text OR st.pharmacy_id IS NULL OR $2 IS NULL)`,
+         WHERE st.id::text = $1::text AND ($2::text IS NULL OR st.pharmacy_id::text = $2::text)`,
         [stock_id, pharmacy_id]
       );
       const batch = stockRes.rows[0];
@@ -117,7 +117,7 @@ class StockModel {
         `SELECT st.*, p.name as product_name FROM stock st
          JOIN products p ON st.product_id::text = p.id::text
          WHERE st.expiry_date < NOW() AND st.quantity > 0
-           AND (st.pharmacy_id::text = $1::text OR st.pharmacy_id IS NULL OR $1 IS NULL)`,
+           AND ($1::text IS NULL OR st.pharmacy_id::text = $1::text)`,
         [pharmacy_id]
       );
       const batches = stockRes.rows;

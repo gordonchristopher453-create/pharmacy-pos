@@ -43,10 +43,23 @@ export const printInpatientBill = (selectedPatient, billingItems = [], drugOrder
     grouped[cat].push(item);
   });
 
-  const totalBilled = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)), 0);
-  const totalPaid = items.filter(i => ['paid', 'insurance', 'nhif', 'sha', 'corporate'].includes(i.status)).reduce((s, i) => s + (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)), 0);
-  const totalWaived = items.filter(i => i.status === 'waived').reduce((s, i) => s + (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)), 0);
-  const balance = totalBilled - totalPaid - totalWaived;
+  const totalBilled = items.reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
+  const totalPaid = items.reduce((s, i) => {
+    const st = (i.status || '').toLowerCase();
+    const pm = (i.payment_method || '').toLowerCase();
+    if (['paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared'].includes(st)) {
+      return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
+    }
+    if (['cash', 'mpesa', 'bank', 'card', 'insurance', 'sha', 'nhif', 'corporate'].includes(pm) && st !== 'pending' && st !== 'waived' && st !== 'cancelled') {
+      return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
+    }
+    if (st === 'partial') {
+      return s + parseFloat(i.paid_amount || 0);
+    }
+    return s;
+  }, 0);
+  const totalWaived = items.filter(i => (i.status || '').toLowerCase() === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
+  const balance = Math.max(0, totalBilled - totalPaid - totalWaived);
 
   const invoiceNo = `INV-IPD-${selectedPatient.patient_number || selectedPatient.id || Math.floor(1000 + Math.random() * 9000)}`;
   const preparedBy = currentUser?.full_name || currentUser?.username || 'Attending Clinical Staff / Accounts';

@@ -31,9 +31,9 @@ export const printCombinedPatientReceipt = (patientRecord, pharmacy, currentUser
     other: 'Other Medical Services'
   };
 
-  const rawItems = patientRecord.items || [];
+  const rawItems = patientRecord.items || patientRecord.billing_items || [];
   // Filter out invalid null items if any
-  const items = Array.isArray(rawItems) ? rawItems.filter(i => i && i.id) : [];
+  const items = Array.isArray(rawItems) ? rawItems.filter(i => i && (i.id || i.item_name || i.description)) : [];
 
   // Group items by item_type category
   const grouped = {};
@@ -43,10 +43,28 @@ export const printCombinedPatientReceipt = (patientRecord, pharmacy, currentUser
     grouped[cat].push(item);
   });
 
-  const totalBilled = parseFloat(patientRecord.total_billed || items.reduce((s, i) => s + parseFloat(i.total_price || 0), 0));
-  const totalPaid = parseFloat(patientRecord.total_paid || items.filter(i => ['paid', 'insurance', 'nhif', 'sha', 'corporate'].includes(i.status)).reduce((s, i) => s + parseFloat(i.total_price || 0), 0));
-  const totalWaived = parseFloat(patientRecord.total_waived || items.filter(i => i.status === 'waived').reduce((s, i) => s + parseFloat(i.total_price || 0), 0));
-  const balance = totalBilled - totalPaid - totalWaived;
+  const itemsBilled = items.reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * (i.quantity || 1)) || 0), 0);
+  const itemsPaid = items.reduce((s, i) => {
+    const st = (i.status || '').toLowerCase();
+    const pm = (i.payment_method || '').toLowerCase();
+    if (['paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared'].includes(st)) {
+      return s + parseFloat(i.paid_amount || i.total_price || (i.unit_price * (i.quantity || 1)) || 0);
+    }
+    if (['cash', 'mpesa', 'bank', 'card', 'insurance', 'sha', 'nhif', 'corporate'].includes(pm) && st !== 'pending' && st !== 'waived' && st !== 'cancelled') {
+      return s + parseFloat(i.paid_amount || i.total_price || (i.unit_price * (i.quantity || 1)) || 0);
+    }
+    if (st === 'partial') {
+      return s + parseFloat(i.paid_amount || 0);
+    }
+    return s;
+  }, 0);
+
+  const itemsWaived = items.filter(i => (i.status || '').toLowerCase() === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (i.unit_price * (i.quantity || 1)) || 0), 0);
+
+  const totalBilled = items.length > 0 ? itemsBilled : parseFloat(patientRecord.total_billed || patientRecord.total_amount || 0);
+  const totalPaid = items.length > 0 ? itemsPaid : parseFloat(patientRecord.total_paid || patientRecord.paid_amount || (patientRecord.fee_paid ? totalBilled : 0));
+  const totalWaived = items.length > 0 ? itemsWaived : parseFloat(patientRecord.total_waived || 0);
+  const balance = Math.max(0, totalBilled - totalPaid - totalWaived);
 
   const isFullySettled = balance <= 0;
   const isDischarged = patientRecord.visit_status === 'discharged' || patientRecord.discharged_at;

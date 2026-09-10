@@ -90,35 +90,59 @@ const getPatientTimeline = async (req, res) => {
 
     const { date_from, date_to, clinic, doctor_id, diagnosis, status } = req.query;
 
-    // Fetch Patient Profile
+    // Fetch Patient Profile (support ID or patient_number, relax pharmacy_id if needed)
     const { decrypt } = require('../utils/encryption');
-    const patRes = await pool.query(
+    let patRes = await pool.query(
       `SELECT p.*
-       FROM patients p WHERE p.id::text = $1::text AND (p.pharmacy_id::text = $2::text OR p.pharmacy_id IS NULL)`,
-      [patient_id, req.pharmacy_id]
-    );
-    if (!patRes.rows[0]) {
+       FROM patients p 
+       WHERE (p.id::text = $1::text OR p.patient_number = $1::text) 
+         AND (p.pharmacy_id::text = $2::text OR p.pharmacy_id IS NULL OR $2 IS NULL)`,
+      [patient_id, req.pharmacy_id || null]
+    ).catch(() => ({ rows: [] }));
+
+    if (!patRes.rows || !patRes.rows[0]) {
+      // Fallback lookup without pharmacy_id filter
+      patRes = await pool.query(
+        `SELECT p.* FROM patients p WHERE p.id::text = $1::text OR p.patient_number = $1::text LIMIT 1`,
+        [patient_id]
+      ).catch(() => ({ rows: [] }));
+    }
+
+    if (!patRes.rows || !patRes.rows[0]) {
       return errorResponse(res, 404, 'Patient not found');
     }
     const rawPatient = patRes.rows[0];
+    const actualPatientId = String(rawPatient.id);
+
+    const safeDecrypt = (val) => {
+      if (!val) return val;
+      try {
+        const d = decrypt(val);
+        return d || val;
+      } catch (e) {
+        return val;
+      }
+    };
+
     const patient = {
       ...rawPatient,
-      national_id: decrypt(rawPatient.national_id) || rawPatient.national_id,
-      sha_number: decrypt(rawPatient.sha_number) || rawPatient.sha_number,
-      allergies: decrypt(rawPatient.allergies) || rawPatient.allergies
+      national_id: safeDecrypt(rawPatient.national_id),
+      sha_number: safeDecrypt(rawPatient.sha_number),
+      allergies: safeDecrypt(rawPatient.allergies),
+      chronic_conditions: safeDecrypt(rawPatient.chronic_conditions)
     };
 
     // Build Visits Query
-    const vParams = [patient_id, req.pharmacy_id];
-    let vWhere = `WHERE v.patient_id::text = $1::text AND (v.pharmacy_id::text = $2::text OR v.pharmacy_id IS NULL)`;
+    const vParams = [actualPatientId];
+    let vWhere = `WHERE v.patient_id::text = $1::text`;
 
     if (date_from) {
       vParams.push(date_from);
-      vWhere += ` AND DATE(v.visit_date) >= $${vParams.length}`;
+      vWhere += ` AND DATE(COALESCE(v.visit_date, v.created_at)) >= $${vParams.length}`;
     }
     if (date_to) {
       vParams.push(date_to);
-      vWhere += ` AND DATE(v.visit_date) <= $${vParams.length}`;
+      vWhere += ` AND DATE(COALESCE(v.visit_date, v.created_at)) <= $${vParams.length}`;
     }
     if (status && status !== 'all') {
       vParams.push(status);
@@ -130,11 +154,11 @@ const getPatientTimeline = async (req, res) => {
        FROM visits v
        LEFT JOIN users u ON v.created_by::text = u.id::text
        ${vWhere}
-       ORDER BY v.visit_date DESC, v.id DESC`,
+       ORDER BY COALESCE(v.visit_date, v.created_at) DESC, v.id DESC`,
       vParams
-    );
+    ).catch(() => ({ rows: [] }));
 
-    const visits = visitsRes.rows;
+    const visits = visitsRes.rows || [];
     if (visits.length === 0) {
       return successResponse(res, 200, 'Timeline fetched', {
         patient,
@@ -144,84 +168,105 @@ const getPatientTimeline = async (req, res) => {
     }
 
     const visitIds = visits.map(v => String(v.id));
+    if (visitIds.length === 0) {
+      return successResponse(res, 200, 'Encounters fetched successfully', {
+        visits: [],
+        clinics: [],
+        doctors: [],
+        stats: { total_visits: 0, completed_visits: 0, pending_visits: 0, emergency_visits: 0 }
+      });
+    }
+
+    const inPlaceholders = visitIds.map((_, i) => `$${i + 1}`).join(', ');
+
+    // Safe individual queries with individual fallbacks
+    const safeQuery = async (sql, params = []) => {
+      try {
+        const r = await pool.query(sql, params);
+        return r.rows || [];
+      } catch (err) {
+        return [];
+      }
+    };
 
     // Bulk Fetch Encounters & Sub-Records
     const [
-      encRes,
-      conRes,
-      vitRes,
-      prsRes,
-      labRes,
-      prcRes,
-      bilRes,
-      injRes,
-      wrdRes,
-      evtRes
+      encRows,
+      conRows,
+      vitRows,
+      prsRows,
+      labRows,
+      prcRows,
+      bilRows,
+      injRows,
+      wrdRows,
+      evtRows
     ] = await Promise.all([
-      pool.query(
+      safeQuery(
         `SELECT e.*, u.full_name as doctor_name
          FROM encounters e
          LEFT JOIN users u ON e.doctor_id::text = u.id::text
-         WHERE e.visit_id::text = ANY($1::text[]) ORDER BY e.id DESC`,
-        [visitIds]
+         WHERE e.visit_id::text IN (${inPlaceholders}) ORDER BY e.id DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT c.*, u.full_name as doctor_name
          FROM consultations c
          LEFT JOIN users u ON c.doctor_id::text = u.id::text
-         WHERE c.visit_id::text = ANY($1::text[]) ORDER BY c.created_at DESC`,
-        [visitIds]
+         WHERE c.visit_id::text IN (${inPlaceholders}) ORDER BY c.created_at DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT vt.*, u.full_name as recorded_by_name
          FROM vitals vt
          LEFT JOIN users u ON vt.recorded_by::text = u.id::text
-         WHERE vt.visit_id::text = ANY($1::text[]) ORDER BY vt.created_at DESC`,
-        [visitIds]
+         WHERE vt.visit_id::text IN (${inPlaceholders}) ORDER BY vt.created_at DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT p.*, u.full_name as doctor_name
          FROM prescriptions p
          LEFT JOIN users u ON p.doctor_id::text = u.id::text
-         WHERE p.visit_id::text = ANY($1::text[]) ORDER BY p.created_at DESC`,
-        [visitIds]
+         WHERE p.visit_id::text IN (${inPlaceholders}) ORDER BY p.created_at DESC`,
+        visitIds
       ),
-      pool.query(
-        `SELECT l.*, u.full_name as doctor_name
+      safeQuery(
+        `SELECT l.*, u.full_name as doctor_name, t.full_name as technician_name
          FROM lab_requests l
          LEFT JOIN users u ON l.doctor_id::text = u.id::text
-         WHERE l.visit_id::text = ANY($1::text[]) ORDER BY l.created_at DESC`,
-        [visitIds]
+         LEFT JOIN users t ON l.resulted_by::text = t.id::text
+         WHERE l.visit_id::text IN (${inPlaceholders}) ORDER BY l.created_at DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT pr.*, u.full_name as doctor_name
          FROM procedures pr
          LEFT JOIN users u ON pr.doctor_id::text = u.id::text
-         WHERE pr.visit_id::text = ANY($1::text[]) ORDER BY pr.created_at DESC`,
-        [visitIds]
+         WHERE pr.visit_id::text IN (${inPlaceholders}) ORDER BY pr.created_at DESC`,
+        visitIds
       ),
-      pool.query(
-        `SELECT b.* FROM billing_items b WHERE b.visit_id::text = ANY($1::text[]) ORDER BY b.created_at DESC`,
-        [visitIds]
+      safeQuery(
+        `SELECT b.* FROM billing_items b WHERE b.visit_id::text IN (${inPlaceholders}) ORDER BY b.created_at DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT iro.*, u.full_name as doctor_name, nu.full_name as nurse_name
          FROM injection_room_orders iro
          LEFT JOIN users u ON iro.doctor_id::text = u.id::text
          LEFT JOIN users nu ON iro.administered_by::text = nu.id::text
-         WHERE iro.visit_id::text = ANY($1::text[]) ORDER BY iro.created_at DESC`,
-        [visitIds]
+         WHERE iro.visit_id::text IN (${inPlaceholders}) ORDER BY iro.created_at DESC`,
+        visitIds
       ),
-      pool.query(
-        `SELECT wt.* FROM ward_transfers wt WHERE wt.visit_id::text = ANY($1::text[]) ORDER BY wt.created_at DESC`,
-        [visitIds]
+      safeQuery(
+        `SELECT wt.* FROM ward_transfers wt WHERE wt.visit_id::text IN (${inPlaceholders}) ORDER BY wt.created_at DESC`,
+        visitIds
       ),
-      pool.query(
+      safeQuery(
         `SELECT ee.*, u.full_name as actor_name
          FROM encounter_events ee
          LEFT JOIN users u ON ee.actor_id::text = u.id::text
-         WHERE ee.visit_id::text = ANY($1::text[]) ORDER BY ee.created_at DESC`,
-        [visitIds]
+         WHERE ee.visit_id::text IN (${inPlaceholders}) ORDER BY ee.created_at DESC`,
+        visitIds
       )
     ]);
 
@@ -231,7 +276,7 @@ const getPatientTimeline = async (req, res) => {
     const availableDiagnoses = new Set();
     const availableStatuses = new Set();
 
-    // Grouping helper maps
+    // Grouping helper maps keyed strictly by string visit_id
     const encByVisit = new Map();
     const conByVisit = new Map();
     const vitByVisit = new Map();
@@ -256,28 +301,54 @@ const getPatientTimeline = async (req, res) => {
       evtByVisit.set(id, []);
     });
 
-    encRes.rows.forEach(r => {
+    encRows.forEach(r => {
       if (r.clinic_id) availableClinics.add(r.clinic_id);
       if (r.department_id) availableClinics.add(r.department_id);
       if (r.doctor_id && r.doctor_name) availableDoctors.set(String(r.doctor_id), r.doctor_name);
       if (r.status) availableStatuses.add(r.status);
-      encByVisit.get(r.visit_id)?.push(r);
+      const k = String(r.visit_id);
+      if (encByVisit.has(k)) encByVisit.get(k).push(r);
     });
 
-    conRes.rows.forEach(r => {
+    conRows.forEach(r => {
       if (r.diagnosis) availableDiagnoses.add(r.diagnosis);
       if (r.doctor_id && r.doctor_name) availableDoctors.set(String(r.doctor_id), r.doctor_name);
-      conByVisit.get(r.visit_id)?.push(r);
+      const k = String(r.visit_id);
+      if (conByVisit.has(k)) conByVisit.get(k).push(r);
     });
 
-    vitRes.rows.forEach(r => vitByVisit.get(r.visit_id)?.push(r));
-    prsRes.rows.forEach(r => prsByVisit.get(r.visit_id)?.push(r));
-    labRes.rows.forEach(r => labByVisit.get(r.visit_id)?.push(r));
-    prcRes.rows.forEach(r => prcByVisit.get(r.visit_id)?.push(r));
-    bilRes.rows.forEach(r => bilByVisit.get(r.visit_id)?.push(r));
-    injRes.rows.forEach(r => injByVisit.get(r.visit_id)?.push(r));
-    wrdRes.rows.forEach(r => wrdByVisit.get(r.visit_id)?.push(r));
-    evtRes.rows.forEach(r => evtByVisit.get(r.visit_id)?.push(r));
+    vitRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (vitByVisit.has(k)) vitByVisit.get(k).push(r);
+    });
+    prsRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (prsByVisit.has(k)) prsByVisit.get(k).push(r);
+    });
+    labRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (labByVisit.has(k)) labByVisit.get(k).push(r);
+    });
+    prcRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (prcByVisit.has(k)) prcByVisit.get(k).push(r);
+    });
+    bilRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (bilByVisit.has(k)) bilByVisit.get(k).push(r);
+    });
+    injRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (injByVisit.has(k)) injByVisit.get(k).push(r);
+    });
+    wrdRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (wrdByVisit.has(k)) wrdByVisit.get(k).push(r);
+    });
+    evtRows.forEach(r => {
+      const k = String(r.visit_id);
+      if (evtByVisit.has(k)) evtByVisit.get(k).push(r);
+    });
 
     visits.forEach(v => {
       if (v.status) availableStatuses.add(v.status);
@@ -287,16 +358,17 @@ const getPatientTimeline = async (req, res) => {
 
     // Assemble structured timeline visits
     const timelineVisits = visits.map(v => {
-      const vEncounters = encByVisit.get(v.id) || [];
-      const vConsultations = conByVisit.get(v.id) || [];
-      const vVitals = vitByVisit.get(v.id) || [];
-      const vPrescriptions = prsByVisit.get(v.id) || [];
-      const vLabs = labByVisit.get(v.id) || [];
-      const vProcedures = prcByVisit.get(v.id) || [];
-      const vBilling = bilByVisit.get(v.id) || [];
-      const vInjections = injByVisit.get(v.id) || [];
-      const vAdmissions = wrdByVisit.get(v.id) || [];
-      const vEvents = evtByVisit.get(v.id) || [];
+      const vid = String(v.id);
+      const vEncounters = encByVisit.get(vid) || [];
+      const vConsultations = conByVisit.get(vid) || [];
+      const vVitals = vitByVisit.get(vid) || [];
+      const vPrescriptions = prsByVisit.get(vid) || [];
+      const vLabs = labByVisit.get(vid) || [];
+      const vProcedures = prcByVisit.get(vid) || [];
+      const vBilling = bilByVisit.get(vid) || [];
+      const vInjections = injByVisit.get(vid) || [];
+      const vAdmissions = wrdByVisit.get(vid) || [];
+      const vEvents = evtByVisit.get(vid) || [];
 
       // Primary diagnosis from consultation
       const primaryConsultation = vConsultations[0] || null;

@@ -5,7 +5,7 @@ class SaleModel {
     const date = new Date();
     const prefix = `RCP-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
     const result = await pool.query(`
-      SELECT COUNT(*) as count FROM sales s LEFT JOIN sale_items si ON s.id::text = si.sale_id::text LEFT JOIN products p ON si.product_id::text = p.id::text WHERE receipt_number LIKE $1 AND (s.pharmacy_id::text = $2::text OR s.pharmacy_id IS NULL)
+      SELECT COUNT(*) as count FROM sales s WHERE receipt_number LIKE $1 AND ($2::text IS NULL OR s.pharmacy_id::text = $2::text)
     `, [`${prefix}%`, pharmacy_id]);
     const count = parseInt(result.rows[0].count) + 1;
     return `${prefix}-${String(count).padStart(4, '0')}`;
@@ -40,7 +40,7 @@ class SaleModel {
       FROM sales s
       LEFT JOIN users u ON s.user_id::text = u.id::text
       LEFT JOIN counters c ON s.counter_id::text = c.id::text
-      WHERE s.id::text = $1::text AND (s.pharmacy_id::text = $2::text OR s.pharmacy_id IS NULL)
+      WHERE s.id::text = $1::text AND ($2::text IS NULL OR s.pharmacy_id::text = $2::text)
     `, [id, pharmacy_id]);
     if (!sale.rows[0]) return null;
 
@@ -48,7 +48,7 @@ class SaleModel {
       SELECT si.*, p.name as product_name, p.generic_name, p.unit, p.barcode
       FROM sale_items si
       JOIN products p ON si.product_id::text = p.id::text
-      WHERE si.sale_id::text = $1::text AND (si.pharmacy_id::text = $2::text OR si.pharmacy_id IS NULL)
+      WHERE si.sale_id::text = $1::text AND ($2::text IS NULL OR si.pharmacy_id::text = $2::text)
     `, [id, pharmacy_id]);
 
     return { ...sale.rows[0], items: items.rows };
@@ -61,7 +61,7 @@ class SaleModel {
       FROM sales s
       LEFT JOIN users u ON s.user_id::text = u.id::text
       LEFT JOIN counters c ON s.counter_id::text = c.id::text
-      WHERE (s.pharmacy_id::text = $1::text OR s.pharmacy_id IS NULL)
+      WHERE ($1::text IS NULL OR s.pharmacy_id::text = $1::text)
     `;
     const params = [pharmacy_id];
 
@@ -94,7 +94,7 @@ class SaleModel {
       FROM sales s
       LEFT JOIN sale_items si ON s.id::text = si.sale_id::text
       LEFT JOIN products p ON si.product_id::text = p.id::text
-      WHERE DATE(s.created_at) = $1 AND (s.pharmacy_id::text = $2::text OR s.pharmacy_id IS NULL)
+      WHERE DATE(s.created_at) = $1 AND ($2::text IS NULL OR s.pharmacy_id::text = $2::text)
     `, [date, pharmacy_id]);
     return result.rows[0];
   }
@@ -107,7 +107,7 @@ class SaleModel {
       FROM sale_items si
       JOIN products p ON si.product_id::text = p.id::text
       JOIN sales s ON si.sale_id::text = s.id::text
-      WHERE (si.pharmacy_id::text = $1::text OR si.pharmacy_id IS NULL)
+      WHERE ($1::text IS NULL OR si.pharmacy_id::text = $1::text)
     `;
     const params = [pharmacy_id];
     if (start_date) { params.push(start_date); query += ` AND s.created_at >= $${params.length}`; }
@@ -126,7 +126,7 @@ class SaleModel {
         COUNT(*) as total_transactions,
         COALESCE(SUM(total), 0) as total_revenue
       FROM sales
-      WHERE (pharmacy_id::text = $1::text OR pharmacy_id IS NULL)
+      WHERE ($1::text IS NULL OR pharmacy_id::text = $1::text)
         AND EXTRACT(YEAR FROM created_at) = $2
       GROUP BY EXTRACT(MONTH FROM created_at), TO_CHAR(created_at, 'Mon')
       ORDER BY month ASC
@@ -142,7 +142,7 @@ class SaleModel {
         COALESCE(AVG(s.total), 0) as avg_sale_value
       FROM sales s
       JOIN users u ON s.user_id::text = u.id::text
-      WHERE (s.pharmacy_id::text = $1::text OR s.pharmacy_id IS NULL)
+      WHERE ($1::text IS NULL OR s.pharmacy_id::text = $1::text)
     `;
     const params = [pharmacy_id];
     if (start_date) { params.push(start_date); query += ` AND s.created_at >= $${params.length}`; }
