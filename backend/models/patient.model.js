@@ -51,17 +51,16 @@ class PatientModel {
     return decryptPatient(result.rows[0]);
   }
 
-  static async findAll({ pharmacy_id, search, limit = 100, offset = 0 }) {
+  static async findAll({ pharmacy_id, search, limit = 50, offset = 0 }) {
     let query = `
       SELECT p.*,
         COUNT(v.id) as total_visits,
         MAX(v.created_at) as last_visit
       FROM patients p
       LEFT JOIN visits v ON p.id = v.patient_id
-      WHERE ($1::text IS NULL OR p.pharmacy_id::text = $1::text)
-        AND (p.is_active = true OR p.is_active IS NULL)
+      WHERE p.pharmacy_id = $1 AND p.is_active = true
     `;
-    const params = [pharmacy_id ? String(pharmacy_id) : null];
+    const params = [pharmacy_id];
 
     if (search) {
       params.push(`%${search}%`);
@@ -69,8 +68,7 @@ class PatientModel {
         p.full_name ILIKE $${params.length} OR
         p.patient_number ILIKE $${params.length} OR
         p.phone ILIKE $${params.length} OR
-        p.national_id ILIKE $${params.length} OR
-        p.email ILIKE $${params.length}
+        p.national_id ILIKE $${params.length}
       )`;
     }
 
@@ -89,16 +87,16 @@ class PatientModel {
         MAX(v.created_at) as last_visit
       FROM patients p
       LEFT JOIN visits v ON p.id = v.patient_id
-      WHERE p.id::text = $1::text AND ($2::text IS NULL OR p.pharmacy_id::text = $2::text)
+      WHERE p.id = $1 AND p.pharmacy_id = $2
       GROUP BY p.id
-    `, [String(id), pharmacy_id ? String(pharmacy_id) : null]);
+    `, [id, pharmacy_id]);
     return decryptPatient(result.rows[0]);
   }
 
   static async findByNumber(patient_number, pharmacy_id) {
     const result = await pool.query(`
-      SELECT * FROM patients WHERE patient_number = $1 AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
-    `, [patient_number, pharmacy_id ? String(pharmacy_id) : null]);
+      SELECT * FROM patients WHERE patient_number = $1 AND pharmacy_id = $2
+    `, [patient_number, pharmacy_id]);
     return decryptPatient(result.rows[0]);
   }
 
@@ -116,14 +114,14 @@ class PatientModel {
         next_of_kin_phone=$11, next_of_kin_relation=$12, blood_group=$13,
         allergies=$14, chronic_conditions=$15, occupation=$16,
         marital_status=$17, emirates_id=$18, nabidh_consent=$19, passport_number=$20, updated_at=NOW()
-      WHERE id::text=$21::text AND ($22::text IS NULL OR pharmacy_id::text=$22::text) RETURNING *
+      WHERE id=$21 AND pharmacy_id=$22 RETURNING *
     `, [
-      full_name, (date_of_birth && String(date_of_birth).trim() !== '') ? String(date_of_birth).trim() : null, gender, national_id ? encrypt(national_id) : null, sha_number ? encrypt(sha_number) : null,
+      full_name, date_of_birth || null, gender, national_id ? encrypt(national_id) : null, sha_number ? encrypt(sha_number) : null,
       phone, email || null, address || null, county || null, next_of_kin_name || null,
       next_of_kin_phone || null, next_of_kin_relation || null, blood_group || null,
       allergies ? encrypt(allergies) : null, chronic_conditions ? encrypt(chronic_conditions) : null, occupation || null,
       marital_status || null, emirates_id || null, nabidh_consent || 'opt_out', passport_number || null,
-      String(id), pharmacy_id ? String(pharmacy_id) : null
+      id, pharmacy_id
     ]);
     return decryptPatient(result.rows[0]);
   }
@@ -216,9 +214,9 @@ class PatientModel {
       ) vt ON true
       LEFT JOIN consultations c ON v.id = c.visit_id
       LEFT JOIN users doc ON c.doctor_id = doc.id
-      WHERE v.patient_id::text = $1::text AND ($2::text IS NULL OR v.pharmacy_id::text = $2::text)
+      WHERE v.patient_id::text = $1::text AND v.pharmacy_id::text = $2::text
       ORDER BY v.created_at DESC
-    `, [String(patient_id), pharmacy_id ? String(pharmacy_id) : null]);
+    `, [patient_id, pharmacy_id]);
     return result.rows;
   }
 
@@ -226,14 +224,12 @@ class PatientModel {
     const result = await pool.query(`
       SELECT
         COUNT(*) as total_patients,
-        COUNT(CASE WHEN LOWER(gender)='male' THEN 1 END) as male_count,
-        COUNT(CASE WHEN LOWER(gender)='female' THEN 1 END) as female_count,
+        COUNT(CASE WHEN gender='male' THEN 1 END) as male_count,
+        COUNT(CASE WHEN gender='female' THEN 1 END) as female_count,
         COUNT(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_this_month,
         COUNT(CASE WHEN created_at >= CURRENT_DATE THEN 1 END) as registered_today
-      FROM patients 
-      WHERE ($1::text IS NULL OR pharmacy_id::text = $1::text) 
-        AND (is_active = true OR is_active IS NULL)
-    `, [pharmacy_id ? String(pharmacy_id) : null]);
+      FROM patients WHERE pharmacy_id = $1 AND is_active = true
+    `, [pharmacy_id]);
     return result.rows[0];
   }
 }

@@ -10,7 +10,7 @@ import ICD10Search from '../components/ICD10Search';
 import CDSAlertModal from '../components/CDSAlertModal';
 import {
   Stethoscope, ArrowLeft, Plus, X, Loader, FlaskConical,
-  RefreshCw, Send, CheckCircle, Search, ChevronRight, Clipboard, Printer, ShieldAlert, Calendar
+  RefreshCw, Send, CheckCircle, Search, ChevronRight, Clipboard, Printer, ShieldAlert
 } from 'lucide-react';
 import { printTreatmentSummary } from '../utils/printTreatmentSummary';
 import { printLabResult } from '../utils/printLabResult';
@@ -137,11 +137,7 @@ export default function DoctorPage() {
 
   const [view, setView]         = useState(searchParams.get('tab') || 'queue');
   const [queueTab, setQueueTab] = useState('active');
-  const today = new Date().toISOString().split('T')[0];
-  const [queueDateFrom, setQueueDateFrom] = useState(today);
-  const [queueDateTo, setQueueDateTo]     = useState(today);
-  const [queueAllDates, setQueueAllDates] = useState(false);
-  const [queueDate, setQueueDate] = useState(today);
+  const [queueDate, setQueueDate] = useState(new Date().toISOString().split('T')[0]);
   const [queue, setQueue]       = useState([]);
   const [search, setSearch]     = useState('');
   const [loading, setLoading]   = useState(true);
@@ -257,7 +253,7 @@ export default function DoctorPage() {
       }
       clearInterval(interval);
     };
-  }, [user?.pharmacy_id, queueTab, queueDateFrom, queueDateTo, queueAllDates]);
+  }, [user?.pharmacy_id, queueTab, queueDate]);
 
   useEffect(() => {
     const tab = searchParams.get('tab') || 'queue';
@@ -341,17 +337,11 @@ export default function DoctorPage() {
   const fetchQueue = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (queueTab === 'active') {
-        params.append('status', 'opd_queue');
-      }
-      if (queueAllDates) {
-        params.append('all_dates', 'true');
-      } else {
-        if (queueDateFrom) params.append('date_from', queueDateFrom);
-        if (queueDateTo) params.append('date_to', queueDateTo);
-      }
-      const res = await api.get(`/visits?${params.toString()}`);
+      const d = queueDate || new Date().toISOString().split('T')[0];
+      const url = queueTab === 'active'
+        ? `/visits?status=opd_queue&date=${d}`
+        : `/visits?date=${d}`;
+      const res = await api.get(url);
       setQueue(res.data.data || []);
     } catch { toast.error('Failed to load queue'); }
     finally { setLoading(false); }
@@ -530,8 +520,7 @@ export default function DoctorPage() {
       // fetch lab results separately
       try {
         const lrRes = await api.get(`/consultations/visit/${visit.id}/lab-results`);
-        const labs = (lrRes.data?.data || []).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-        setLabResults(labs);
+        setLabResults(lrRes.data?.data || []);
       } catch {
         setLabResults([]);
       }
@@ -934,8 +923,7 @@ export default function DoctorPage() {
     if (!selectedVisit) return;
     try {
       const r = await api.get(`/consultations/visit/${selectedVisit.id}/lab-results`);
-      const labs = (r.data.data || []).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-      setLabResults(labs);
+      setLabResults(r.data.data || []);
       toast.success('Lab results refreshed');
     } catch { toast.error('Failed to refresh'); }
   };
@@ -1244,127 +1232,22 @@ export default function DoctorPage() {
         </div>
       </div>
 
-      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems: 'center' }}>
-        <div style={{ position:'relative', flex:1, minWidth:220 }}>
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+        <div style={{ position:'relative', flex:1, minWidth:200 }}>
           <Search size={16} style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}/>
           <input value={search} onChange={e=>setSearch(e.target.value)}
             placeholder="Search by name, patient number or phone..."
             style={{ width:'100%', padding:'10px 10px 10px 38px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none', boxSizing:'border-box' }}/>
         </div>
-
-        {/* OPD Date Range Filter Toolbar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '6px 12px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Calendar size={15} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>Queue Filter:</span>
-          </div>
-
-          <div style={{ display: 'flex', gap: 4, background: 'var(--bg-elevated)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
-            <button
-              type="button"
-              onClick={() => {
-                setQueueAllDates(false);
-                setQueueDateFrom(today);
-                setQueueDateTo(today);
-              }}
-              style={{
-                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                background: !queueAllDates && queueDateFrom === today && queueDateTo === today ? 'var(--accent)' : 'transparent',
-                color: !queueAllDates && queueDateFrom === today && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
-              }}
-            >
-              Today
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="date" value={queueDate}
+            onChange={e => setQueueDate(e.target.value)}
+            style={{ padding:'10px 12px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none' }}/>
+          {queueDate && (
+            <button onClick={() => setQueueDate('')} style={{ padding:'8px 12px', background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer' }}>
+              Clear
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                const y = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-                setQueueAllDates(false);
-                setQueueDateFrom(y);
-                setQueueDateTo(y);
-              }}
-              style={{
-                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                background: !queueAllDates && queueDateFrom === new Date(Date.now() - 86400000).toISOString().split('T')[0] && queueDateTo === new Date(Date.now() - 86400000).toISOString().split('T')[0] ? 'var(--accent)' : 'transparent',
-                color: !queueAllDates && queueDateFrom === new Date(Date.now() - 86400000).toISOString().split('T')[0] && queueDateTo === new Date(Date.now() - 86400000).toISOString().split('T')[0] ? '#0F1612' : 'var(--text-muted)'
-              }}
-            >
-              Yesterday
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const w = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-                setQueueAllDates(false);
-                setQueueDateFrom(w);
-                setQueueDateTo(today);
-              }}
-              style={{
-                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                background: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
-                color: !queueAllDates && queueDateFrom === new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
-              }}
-            >
-              7 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const now = new Date();
-                const m = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-                setQueueAllDates(false);
-                setQueueDateFrom(m);
-                setQueueDateTo(today);
-              }}
-              style={{
-                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                background: !queueAllDates && queueDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && queueDateTo === today ? 'var(--accent)' : 'transparent',
-                color: !queueAllDates && queueDateFrom === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] && queueDateTo === today ? '#0F1612' : 'var(--text-muted)'
-              }}
-            >
-              This Month
-            </button>
-            <button
-              type="button"
-              onClick={() => setQueueAllDates(true)}
-              style={{
-                padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                background: queueAllDates ? 'var(--accent)' : 'transparent',
-                color: queueAllDates ? '#0F1612' : 'var(--text-muted)'
-              }}
-            >
-              All Dates
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>From:</span>
-            <input
-              type="date"
-              value={queueDateFrom}
-              onChange={e => {
-                setQueueAllDates(false);
-                const val = e.target.value;
-                setQueueDateFrom(val);
-                if (queueDateTo < val) setQueueDateTo(val);
-              }}
-              style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>To:</span>
-            <input
-              type="date"
-              value={queueDateTo}
-              onChange={e => {
-                setQueueAllDates(false);
-                const val = e.target.value;
-                setQueueDateTo(val);
-              }}
-              style={{ padding: '6px 8px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
-            />
-          </div>
+          )}
         </div>
       </div>
 
@@ -2792,9 +2675,9 @@ export default function DoctorPage() {
             {activeTab === 'history' && (
               <div className="space-y-4">
                 <ClinicalTimeline
-                  patientId={selectedVisit?.patient_id || patient?.id}
-                  patientName={selectedVisit?.patient_name || patient?.full_name}
-                  patientNumber={selectedVisit?.patient_number || patient?.patient_number}
+                  patientId={selectedVisit?.patient_id}
+                  patientName={selectedVisit?.patient_name}
+                  patientNumber={selectedVisit?.patient_number}
                 />
               </div>
             )}
@@ -4212,20 +4095,6 @@ function PatientHistoryView({ user, onBack, onOpenVisit }) {
 
 // ── MOH REPORT COMPONENT ──────────────────────────────────────────────────────
 function MOHReportView({ user, onBack }) {
-  const reduxAuth = useSelector(s => s.auth);
-  const activeUser = user || reduxAuth?.user || (() => {
-    try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
-  })();
-
-  const rawDoctorName = activeUser?.full_name || activeUser?.name || activeUser?.email?.split('@')[0] || 'Medical Officer';
-  const isDoctorRole = activeUser?.role === 'doctor' || activeUser?.role === 'clinician';
-  const preparedDoctorName = (isDoctorRole && !rawDoctorName.toLowerCase().startsWith('dr'))
-    ? `Dr. ${rawDoctorName}`
-    : rawDoctorName;
-  const preparedDoctorRole = activeUser?.role
-    ? (activeUser.role.charAt(0).toUpperCase() + activeUser.role.slice(1).replace('_', ' '))
-    : 'Medical Officer / Clinician';
-
   const now = new Date();
   const [dateFrom, setDateFrom] = useState(new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0]);
   const [dateTo, setDateTo]     = useState(now.toISOString().split('T')[0]);
@@ -4253,8 +4122,8 @@ function MOHReportView({ user, onBack }) {
     if (!report) return;
     const win = window.open('', '_blank');
     
-    const facilityName = activeUser?.pharmacy?.name || 'HEKIMA MEDICAL CENTRE';
-    const facilityAddress = activeUser?.pharmacy?.address || 'P.O. Box 1234, Nairobi';
+    const facilityName = user?.pharmacy?.name || 'HEKIMA MEDICAL CENTRE';
+    const facilityAddress = user?.pharmacy?.address || 'P.O. Box 1234, Nairobi';
 
     const renderTableHtml = (title, isUnder5) => {
       const data = allData.filter(r => isUnder5
@@ -4271,47 +4140,38 @@ function MOHReportView({ user, onBack }) {
         secTotalM += m;
         secTotalF += f;
         return `
-          <tr style="background: ${i % 2 === 1 ? '#f8fafc' : '#ffffff'};">
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; width: 36px; text-align: center; color: #475569; font-weight: 600;">${i + 1}</td>
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; text-align: left; font-weight: 600; color: #0f172a;">${r.diagnosis}</td>
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; width: 110px; text-align: center; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; font-weight: 600; color: #334155; background: #fdfdfd;">${r.icd_code || '—'}</td>
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; width: 80px; text-align: center; font-weight: 700; color: #1e40af;">${m}</td>
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; width: 80px; text-align: center; font-weight: 700; color: #be185d;">${f}</td>
-            <td style="border: 1px solid #94a3b8; padding: 7px 10px; width: 90px; text-align: center; font-weight: 800; color: #0f172a; background: #f1f5f9;">${m + f}</td>
+          <tr style="border-bottom: 1px solid #ddd;">
+            <td style="padding: 6px 12px; font-weight: 500;">${r.diagnosis}</td>
+            <td style="padding: 6px 12px; font-family: monospace; font-size: 11px;">${r.icd_code || '—'}</td>
+            <td style="padding: 6px 12px; text-align: center; color: #1a4a8a;">${m}</td>
+            <td style="padding: 6px 12px; text-align: center; color: #ec4899;">${f}</td>
+            <td style="padding: 6px 12px; text-align: center; font-weight: bold;">${m + f}</td>
           </tr>
         `;
       }).join('');
 
       return `
-        <div style="margin-bottom: 24px; page-break-inside: avoid;">
-          <div style="background: #1e3a8a; color: #ffffff; padding: 8px 14px; font-weight: 800; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; border: 1.5px solid #1e3a8a; border-bottom: none; display: flex; justify-content: space-between; align-items: center;">
-            <span>${title}</span>
-            <span style="font-size: 11px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 3px;">Cases: ${data.length}</span>
-          </div>
-          <table style="width: 100%; border-collapse: collapse; font-size: 11.5px; border: 1.5px solid #334155;">
+        <div style="margin-bottom: 25px; page-break-inside: avoid;">
+          <div style="background: #1a4a8a; color: white; padding: 6px 12px; font-weight: bold; border-radius: 4px; font-size: 13px; margin-bottom: 10px;">${title}</div>
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
             <thead>
-              <tr style="background: #e2e8f0; color: #0f172a;">
-                <th style="padding: 8px 10px; border: 1px solid #64748b; width: 36px; text-align: center; font-weight: 800;">#</th>
-                <th style="padding: 8px 10px; border: 1px solid #64748b; text-align: left; font-weight: 800;">DIAGNOSIS / DISEASE CATEGORY (MOH 204)</th>
-                <th style="padding: 8px 10px; border: 1px solid #64748b; width: 110px; text-align: center; font-weight: 800;">ICD CODE</th>
-                <th style="padding: 8px 10px; border: 1px solid #64748b; width: 80px; text-align: center; font-weight: 800; color: #1e40af;">MALE</th>
-                <th style="padding: 8px 10px; border: 1px solid #64748b; width: 80px; text-align: center; font-weight: 800; color: #be185d;">FEMALE</th>
-                <th style="padding: 8px 10px; border: 1px solid #64748b; width: 90px; text-align: center; font-weight: 800;">TOTAL</th>
+              <tr style="background:#eef2f7; border-bottom: 2px solid #ddd; text-align:left;">
+                <th style="padding:6px 12px; border:1px solid #ddd;">Diagnosis / Disease Category</th>
+                <th style="padding:6px 12px; border:1px solid #ddd; width: 120px;">ICD Code</th>
+                <th style="padding:6px 12px; border:1px solid #ddd; width: 100px; text-align:center;">Male</th>
+                <th style="padding:6px 12px; border:1px solid #ddd; width: 100px; text-align:center;">Female</th>
+                <th style="padding:6px 12px; border:1px solid #ddd; width: 100px; text-align:center;">Total</th>
               </tr>
             </thead>
             <tbody>
-              ${rowsHtml || '<tr><td colspan="6" style="padding: 24px; text-align: center; color: #64748b; font-style: italic; border: 1px solid #94a3b8;">No cases recorded in this age category for this period.</td></tr>'}
+              ${rowsHtml || '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #777; font-style: italic;">No cases recorded in this section.</td></tr>'}
             </tbody>
-            <tfoot>
-              <tr style="background: #f1f5f9; border-top: 2px solid #0f172a;">
-                <td colspan="3" style="padding: 9px 12px; border: 1.5px solid #334155; font-weight: 800; text-align: right; text-transform: uppercase; font-size: 11.5px; color: #0f172a;">
-                  SUB-TOTAL (${isUnder5 ? 'UNDER 5 YEARS' : 'OVER 5 YEARS'})
-                </td>
-                <td style="padding: 9px 10px; border: 1.5px solid #334155; text-align: center; font-weight: 800; color: #1e40af; font-size: 12.5px;">${secTotalM}</td>
-                <td style="padding: 9px 10px; border: 1.5px solid #334155; text-align: center; font-weight: 800; color: #be185d; font-size: 12.5px;">${secTotalF}</td>
-                <td style="padding: 9px 10px; border: 1.5px solid #334155; text-align: center; font-weight: 900; color: #0f172a; background: #e2e8f0; font-size: 13px;">${secTotalM + secTotalF}</td>
-              </tr>
-            </tfoot>
+            <tr style="border-top:2px solid #1a4a8a; background:#f5f5f5; font-weight:bold;">
+              <td colspan="2" style="padding: 8px 12px;">SUB-TOTAL</td>
+              <td style="padding: 8px 12px; text-align:center; color:#1a4a8a;">${secTotalM}</td>
+              <td style="padding: 8px 12px; text-align:center; color:#ec4899;">${secTotalF}</td>
+              <td style="padding: 8px 12px; text-align:center;">${secTotalM + secTotalF}</td>
+            </tr>
           </table>
         </div>
       `;
@@ -4322,20 +4182,18 @@ function MOHReportView({ user, onBack }) {
         <head>
           <title>MOH 204 Outpatient Summary Report</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; line-height: 1.4; margin: 30px; background: #fff; }
-            .header-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; border-bottom: 3px double #1e3a8a; padding-bottom: 12px; }
-            .facility-name { font-size: 20px; font-weight: 800; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; }
-            .facility-sub { font-size: 11px; color: #475569; margin-top: 3px; }
-            .report-title { font-size: 16px; font-weight: 800; text-align: center; background: #f1f5f9; padding: 8px 12px; margin: 18px 0; letter-spacing: 1px; border-radius: 4px; border-left: 6px solid #1e3a8a; border-right: 6px solid #1e3a8a; text-transform: uppercase; color: #1e3a8a; }
-            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 22px; border: 1.5px solid #64748b; }
-            .info-table td { padding: 7px 10px; font-size: 11.5px; border: 1px solid #94a3b8; }
-            .info-label { font-weight: 700; color: #334155; background: #f1f5f9; width: 18%; }
-            .footer-section { margin-top: 35px; width: 100%; border-top: 1.5px solid #cbd5e1; padding-top: 14px; font-size: 11px; page-break-inside: avoid; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; line-height: 1.4; margin: 40px; }
+            .header-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; border-bottom: 3px double #1a4a8a; padding-bottom: 15px; }
+            .facility-name { font-size: 20px; font-weight: bold; color: #1a4a8a; text-transform: uppercase; }
+            .facility-sub { font-size: 11px; color: #555; margin-top: 3px; }
+            .report-title { font-size: 18px; font-weight: bold; text-align: center; background: #eef2f7; padding: 6px; margin: 20px 0; letter-spacing: 1.5px; border-radius: 4px; border-left: 5px solid #1a4a8a; text-transform: uppercase; }
+            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+            .info-table td { padding: 8px; font-size: 12px; border: 1px solid #eee; }
+            .info-label { font-weight: bold; color: #555; background: #f9f9f9; width: 20%; }
+            .footer-section { margin-top: 40px; width: 100%; border-top: 1px solid #ddd; padding-top: 15px; font-size: 11px; color: #777; text-align: center; }
             @media print {
-              body { margin: 10mm; font-size: 11px; }
+              body { margin: 20px; }
               @page { size: A4 portrait; margin: 10mm; }
-              table thead { display: table-header-group; }
-              table tr { page-break-inside: avoid; }
             }
           </style>
         </head>
@@ -4347,93 +4205,39 @@ function MOHReportView({ user, onBack }) {
                 <div class="facility-sub">${facilityAddress}</div>
               </td>
               <td style="text-align: right; vertical-align: bottom;">
-                <div style="font-size: 14px; font-weight: 800; color: #1e3a8a;">MOH OUTPATIENT SERVICES</div>
-                <div style="font-size: 11px; color: #475569; font-weight: 600;">Ministry of Health, Republic of Kenya</div>
+                <div style="font-size: 14px; font-weight: bold; color: #333;">MOH OUTPATIENT SERVICES</div>
+                <div style="font-size: 11px; color: #666;">Ministry of Health, Kenya</div>
               </td>
             </tr>
           </table>
 
-          <div class="report-title">MOH 204 Outpatient Department Summary Report</div>
+          <div class="report-title">MOH 204 Outpatient Department Summary</div>
 
           <table class="info-table">
             <tr>
               <td class="info-label">Reporting Period</td>
-              <td><strong>From:</strong> ${new Date(dateFrom).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })} &nbsp;<strong>To:</strong> ${new Date(dateTo).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-              <td class="info-label">Prepared By</td>
-              <td><strong>${preparedDoctorName}</strong> <span style="color:#64748b; font-size:11px;">(${preparedDoctorRole})</span></td>
+              <td><strong>From:</strong> ${new Date(dateFrom).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })} <strong>To:</strong> ${new Date(dateTo).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+              <td class="info-label">Total OPD Attendance</td>
+              <td><strong>${totalU5M + totalU5F + totalOver5M + totalOver5F}</strong> visits</td>
             </tr>
             <tr>
-              <td class="info-label">Total Attendance</td>
-              <td><strong>${totalU5M + totalU5F + totalOver5M + totalOver5F}</strong> OPD visits</td>
-              <td class="info-label">Age Demographics</td>
-              <td><strong>Under 5:</strong> ${totalU5M + totalU5F} (${totalU5M}M / ${totalU5F}F) &nbsp;|&nbsp; <strong>Over 5:</strong> ${totalOver5M + totalOver5F} (${totalOver5M}M / ${totalOver5F}F)</td>
+              <td class="info-label">Under 5 Attendance</td>
+              <td>${totalU5M + totalU5F} (Male: ${totalU5M} | Female: ${totalU5F})</td>
+              <td class="info-label">Over 5 Attendance</td>
+              <td>${totalOver5M + totalOver5F} (Male: ${totalOver5M} | Female: ${totalOver5F})</td>
             </tr>
           </table>
 
           ${renderTableHtml("MOH 204A — Under 5 Years Outpatient Summary", true)}
           ${renderTableHtml("MOH 204B — Over 5 Years Outpatient Summary", false)}
 
-          <div style="margin-bottom: 24px; page-break-inside: avoid;">
-            <div style="background: #0f172a; color: #ffffff; padding: 7px 12px; font-weight: 800; font-size: 12.5px; letter-spacing: 0.5px; text-transform: uppercase; border: 1.5px solid #0f172a; border-bottom: none;">
-              MOH 204 GRAND AGGREGATE SUMMARY (ALL AGES COMBINED)
-            </div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 11.5px; border: 1.5px solid #334155;">
-              <thead>
-                <tr style="background: #e2e8f0; color: #0f172a;">
-                  <th style="padding: 7px 10px; border: 1px solid #64748b; text-align: left; font-weight: 800;">OPD SERVICE CLASSIFICATION</th>
-                  <th style="padding: 7px 10px; border: 1px solid #64748b; width: 110px; text-align: center; font-weight: 800; color: #1e40af;">MALE ATTENDANCE</th>
-                  <th style="padding: 7px 10px; border: 1px solid #64748b; width: 110px; text-align: center; font-weight: 800; color: #be185d;">FEMALE ATTENDANCE</th>
-                  <th style="padding: 7px 10px; border: 1px solid #64748b; width: 130px; text-align: center; font-weight: 800;">TOTAL CASES</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; font-weight: 600;">MOH 204A — Under 5 Years (Pediatric OPD)</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 700; color: #1e40af;">${totalU5M}</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 700; color: #be185d;">${totalU5F}</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 800; background: #f8fafc;">${totalU5M + totalU5F}</td>
-                </tr>
-                <tr style="background: #f8fafc;">
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; font-weight: 600;">MOH 204B — Over 5 Years (Adult & General OPD)</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 700; color: #1e40af;">${totalOver5M}</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 700; color: #be185d;">${totalOver5F}</td>
-                  <td style="padding: 7px 10px; border: 1px solid #94a3b8; text-align: center; font-weight: 800; background: #f1f5f9;">${totalOver5M + totalOver5F}</td>
-                </tr>
-              </tbody>
-              <tfoot>
-                <tr style="background: #e2e8f0; font-weight: 900; border-top: 2px solid #0f172a;">
-                  <td style="padding: 8px 10px; border: 1.5px solid #334155; text-transform: uppercase;">COMBINED OPD GRAND TOTAL</td>
-                  <td style="padding: 8px 10px; border: 1.5px solid #334155; text-align: center; color: #1e40af; font-size: 12.5px;">${totalU5M + totalOver5M}</td>
-                  <td style="padding: 8px 10px; border: 1.5px solid #334155; text-align: center; color: #be185d; font-size: 12.5px;">${totalU5F + totalOver5F}</td>
-                  <td style="padding: 8px 10px; border: 1.5px solid #334155; text-align: center; color: #0f172a; background: #cbd5e1; font-size: 13.5px;">${totalU5M + totalU5F + totalOver5M + totalOver5F}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
           <div class="footer-section">
-            <div style="font-size: 10px; color: #64748b; margin-bottom: 22px; padding-bottom: 8px; border-bottom: 1px solid #cbd5e1; display: flex; justify-content: space-between;">
-              <span><strong>Generated on:</strong> ${new Date().toLocaleString('en-KE')}</span>
-              <span><strong>Prepared By:</strong> ${preparedDoctorName} (${preparedDoctorRole})</span>
-              <span><strong>Facility:</strong> ${facilityName}</span>
+            <div style="font-size: 10px; color: #555; margin-bottom: 20px;">
+              Generated on: ${new Date().toLocaleString('en-KE')} | Authorized By: Medical Superintendent / Facility In-Charge
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-top: 25px; font-size: 11px;">
-              <div style="text-align: left; width: 260px;">
-                <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Prepared By (Logged-in Clinician):</div>
-                <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">${preparedDoctorName}</div>
-                <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">${preparedDoctorRole}</div>
-                <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
-                  Doctor / Clinician's Signature & Date
-                </div>
-              </div>
-              <div style="text-align: left; width: 260px;">
-                <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Verified & Approved By:</div>
-                <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">Medical Superintendent</div>
-                <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">Health Records & In-Charge</div>
-                <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
-                  Official Stamp & Date
-                </div>
-              </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 11px;">
+              <div style="border-top: 1px solid #333; width: 180px; padding-top: 4px;">Prepared By: Medical Records Officer</div>
+              <div style="border-top: 1px solid #333; width: 180px; padding-top: 4px;">Approved By: Clinician In Charge</div>
             </div>
           </div>
         </body>
@@ -4449,51 +4253,39 @@ function MOHReportView({ user, onBack }) {
       : (parseInt(r.over5_male)||0)+(parseInt(r.over5_female)||0)>0
     );
     return (
-      <div style={{ background:'var(--bg-surface)', borderRadius:14, border:'1px solid var(--border)', marginBottom:20, overflow:'hidden' }}>
+      <div style={{ background:'var(--bg-surface)', borderRadius:14, border:'1px solid var(--border)', marginBottom:20 }}>
         <div style={{ padding:'16px 20px', borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div style={{ fontSize:15, fontWeight:700, color }}>{title}</div>
-          <div style={{ fontSize:12, color:'var(--text-muted)' }}>Total Cases: <strong style={{ color:'var(--text-primary)' }}>{totalM+totalF}</strong> ({totalM}M / {totalF}F)</div>
+          <div style={{ fontSize:12, color:'var(--text-muted)' }}>Total: <strong style={{ color:'var(--text-primary)' }}>{totalM+totalF}</strong> ({totalM}M / {totalF}F)</div>
         </div>
         {data.length===0 ? (
           <div style={{ padding:40, textAlign:'center', color:'var(--text-faint)', fontSize:13 }}>No cases recorded</div>
         ) : (
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-              <thead>
-                <tr style={{ background:'var(--bg-elevated)' }}>
-                  <th style={{ padding:'10px 14px', width:40, textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--text-muted)', fontWeight:700, fontSize:11 }}>#</th>
-                  <th style={{ padding:'10px 16px', textAlign:'left', borderRight:'1px solid var(--border)', color:'var(--text-muted)', fontWeight:700, fontSize:11 }}>DIAGNOSIS / DISEASE CATEGORY</th>
-                  <th style={{ padding:'10px 14px', width:120, textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--text-muted)', fontWeight:700, fontSize:11 }}>ICD CODE</th>
-                  <th style={{ padding:'10px 14px', width:90, textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--info)', fontWeight:700, fontSize:11 }}>MALE</th>
-                  <th style={{ padding:'10px 14px', width:90, textAlign:'center', borderRight:'1px solid var(--border)', color:'#ec4899', fontWeight:700, fontSize:11 }}>FEMALE</th>
-                  <th style={{ padding:'10px 16px', width:100, textAlign:'center', color:'var(--text-primary)', fontWeight:800, fontSize:11 }}>TOTAL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((r,i)=>{
-                  const m = isUnder5 ? parseInt(r.under5_male)||0 : parseInt(r.over5_male)||0;
-                  const f = isUnder5 ? parseInt(r.under5_female)||0 : parseInt(r.over5_female)||0;
-                  if (m+f===0) return null;
-                  return (
-                    <tr key={i} style={{ borderTop:'1px solid var(--border)', background:i%2===0?'transparent':'var(--bg-elevated)20' }}>
-                      <td style={{ padding:'10px 14px', textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--text-muted)', fontSize:12, fontWeight:600 }}>{i+1}</td>
-                      <td style={{ padding:'10px 16px', fontWeight:600, borderRight:'1px solid var(--border)', color:'var(--text-primary)' }}>{r.diagnosis}</td>
-                      <td style={{ padding:'10px 14px', textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--text-muted)', fontFamily:'monospace', fontSize:11 }}>{r.icd_code||'—'}</td>
-                      <td style={{ padding:'10px 14px', textAlign:'center', borderRight:'1px solid var(--border)', color:'var(--info)', fontWeight:700 }}>{m}</td>
-                      <td style={{ padding:'10px 14px', textAlign:'center', borderRight:'1px solid var(--border)', color:'#ec4899', fontWeight:700 }}>{f}</td>
-                      <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:800, color:'var(--text-primary)', background:'var(--bg-elevated)30' }}>{m+f}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr style={{ borderTop:'2px solid var(--border)', background:'var(--bg-elevated)' }}>
-                  <td colSpan={3} style={{ padding:'10px 16px', fontWeight:800, textAlign:'right', borderRight:'1px solid var(--border)' }}>SUB-TOTAL</td>
-                  <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:800, color:'var(--info)', borderRight:'1px solid var(--border)' }}>{totalM}</td>
-                  <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:800, color:'#ec4899', borderRight:'1px solid var(--border)' }}>{totalF}</td>
-                  <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:800, color:'var(--text-primary)' }}>{totalM+totalF}</td>
-                </tr>
-              </tfoot>
+              <thead><tr style={{ background:'var(--bg-elevated)' }}>
+                {['DIAGNOSIS','ICD CODE','MALE','FEMALE','TOTAL'].map(h=><th key={h} style={{ padding:'10px 16px', textAlign:h==='DIAGNOSIS'||h==='ICD CODE'?'left':'center', color:'var(--text-muted)', fontWeight:600, fontSize:11 }}>{h}</th>)}
+              </tr></thead>
+              <tbody>{data.map((r,i)=>{
+                const m = isUnder5 ? parseInt(r.under5_male)||0 : parseInt(r.over5_male)||0;
+                const f = isUnder5 ? parseInt(r.under5_female)||0 : parseInt(r.over5_female)||0;
+                if (m+f===0) return null;
+                return (
+                  <tr key={i} style={{ borderTop:'1px solid var(--border)', background:i%2===0?'transparent':'var(--bg-elevated)10' }}>
+                    <td style={{ padding:'10px 16px', fontWeight:500 }}>{r.diagnosis}</td>
+                    <td style={{ padding:'10px 16px', color:'var(--text-muted)', fontFamily:'monospace', fontSize:11 }}>{r.icd_code||'—'}</td>
+                    <td style={{ padding:'10px 16px', textAlign:'center', color:'var(--info)' }}>{m}</td>
+                    <td style={{ padding:'10px 16px', textAlign:'center', color:'#ec4899' }}>{f}</td>
+                    <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:700 }}>{m+f}</td>
+                  </tr>
+                );
+              })}</tbody>
+              <tfoot><tr style={{ borderTop:'2px solid var(--border)', background:'var(--bg-elevated)' }}>
+                <td colSpan={2} style={{ padding:'10px 16px', fontWeight:700 }}>TOTAL</td>
+                <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:700, color:'var(--info)' }}>{totalM}</td>
+                <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:700, color:'#ec4899' }}>{totalF}</td>
+                <td style={{ padding:'10px 16px', textAlign:'center', fontWeight:700 }}>{totalM+totalF}</td>
+              </tr></tfoot>
             </table>
           </div>
         )}

@@ -1134,46 +1134,7 @@ router.put('/admissions/:admission_id/management-plan', async (req, res) => {
 // GET all active inpatient drug orders for pharmacy queue
 router.get('/pharmacy-queue', async (req, res) => {
   try {
-    const pharmacyId = req.pharmacy_id || req.user?.pharmacy_id || null;
     const result = await pool.query(`
-      SELECT 
-        pr.id,
-        pr.visit_id,
-        pr.patient_id,
-        pr.drug_name,
-        pr.dosage,
-        pr.frequency,
-        pr.duration,
-        COALESCE(pr.route, 'oral') as route,
-        COALESCE(pr.quantity, 1) as quantity,
-        pr.instructions,
-        pr.product_id,
-        pr.created_at,
-        p.full_name as patient_name,
-        p.patient_number,
-        p.gender,
-        COALESCE(p.allergies, '') as allergies,
-        w.name as ward_name,
-        b.bed_number,
-        u.full_name as doctor_name
-      FROM prescriptions pr
-      JOIN visits v ON pr.visit_id::text = v.id::text
-      LEFT JOIN patients p ON (pr.patient_id::text = p.id::text OR v.patient_id::text = p.id::text)
-      LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
-      LEFT JOIN wards w ON b.ward_id::text = w.id::text
-      LEFT JOIN users u ON pr.doctor_id::text = u.id::text
-      WHERE ($1::text IS NULL OR pr.pharmacy_id::text = $1::text OR pr.pharmacy_id IS NULL)
-        AND (pr.status = 'pending' OR pr.status IS NULL)
-        AND (
-          (ia.id IS NOT NULL AND ia.status = 'admitted') 
-          OR (b.id IS NOT NULL AND b.status = 'occupied')
-          OR v.status IN ('inpatient', 'admitted') 
-          OR LOWER(COALESCE(v.visit_type, '')) IN ('inpatient', 'ipd', 'admission')
-        )
-
-      UNION ALL
-
       SELECT 
         iro.id,
         iro.visit_id,
@@ -1182,41 +1143,69 @@ router.get('/pharmacy-queue', async (req, res) => {
         iro.dosage,
         iro.frequency,
         iro.duration,
-        COALESCE(iro.route, 'injection') as route,
-        COALESCE(iro.quantity, 1) as quantity,
+        iro.route,
+        iro.quantity,
         iro.instructions,
         iro.product_id,
         iro.created_at,
         p.full_name as patient_name,
         p.patient_number,
         p.gender,
-        COALESCE(p.allergies, '') as allergies,
+        p.allergies,
         w.name as ward_name,
         b.bed_number,
         u.full_name as doctor_name
       FROM injection_room_orders iro
       JOIN visits v ON iro.visit_id::text = v.id::text
-      LEFT JOIN patients p ON (iro.patient_id::text = p.id::text OR v.patient_id::text = p.id::text)
+      JOIN patients p ON iro.patient_id::text = p.id::text
       LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
-      LEFT JOIN wards w ON b.ward_id::text = w.id::text
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
+      LEFT JOIN wards w ON b.ward_id = w.id
       LEFT JOIN users u ON iro.prescribed_by::text = u.id::text
-      WHERE ($1::text IS NULL OR iro.pharmacy_id::text = $1::text OR iro.pharmacy_id IS NULL)
+      WHERE (iro.pharmacy_id::text = $1::text OR iro.pharmacy_id IS NULL)
         AND (iro.status = 'pending' OR iro.status IS NULL)
-        AND (
-          (ia.id IS NOT NULL AND ia.status = 'admitted') 
-          OR (b.id IS NOT NULL AND b.status = 'occupied')
-          OR v.status IN ('inpatient', 'admitted') 
-          OR LOWER(COALESCE(v.visit_type, '')) IN ('inpatient', 'ipd', 'admission')
-        )
+        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL OR iro.id IS NOT NULL)
+
+      UNION ALL
+
+      SELECT 
+        pr.id,
+        pr.visit_id,
+        pr.patient_id,
+        pr.drug_name,
+        pr.dosage,
+        pr.frequency,
+        pr.duration,
+        pr.route,
+        pr.quantity,
+        pr.instructions,
+        pr.product_id,
+        pr.created_at,
+        p.full_name as patient_name,
+        p.patient_number,
+        p.gender,
+        p.allergies,
+        w.name as ward_name,
+        b.bed_number,
+        u.full_name as doctor_name
+      FROM prescriptions pr
+      JOIN visits v ON pr.visit_id::text = v.id::text
+      JOIN patients p ON pr.patient_id::text = p.id::text
+      LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
+      LEFT JOIN wards w ON b.ward_id = w.id
+      LEFT JOIN users u ON pr.doctor_id::text = u.id::text
+      WHERE (pr.pharmacy_id::text = $1::text OR pr.pharmacy_id IS NULL)
+        AND (pr.status = 'pending' OR pr.status IS NULL)
+        AND (v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient' OR ia.id IS NOT NULL OR b.id IS NOT NULL OR EXISTS (SELECT 1 FROM injection_room_orders iro3 WHERE iro3.visit_id::text = pr.visit_id::text))
         AND NOT EXISTS (
-          SELECT 1 FROM prescriptions pr2 
-          WHERE pr2.visit_id::text = iro.visit_id::text 
-            AND LOWER(TRIM(pr2.drug_name)) = LOWER(TRIM(iro.drug_name))
+          SELECT 1 FROM injection_room_orders iro2 
+          WHERE iro2.visit_id::text = pr.visit_id::text 
+            AND LOWER(TRIM(iro2.drug_name)) = LOWER(TRIM(pr.drug_name))
         )
       ORDER BY created_at DESC
       LIMIT 200
-    `, [pharmacyId]);
+    `, [req.pharmacy_id]);
     
     const visitsMap = {};
     for (const row of result.rows) {

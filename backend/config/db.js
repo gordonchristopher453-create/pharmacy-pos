@@ -10,24 +10,15 @@ const tenantStorage = new AsyncLocalStorage();
 let pool;
 let isInMemory = false;
 
-const connectionString = 
-  process.env.DATABASE_URL ||
-  process.env.POSTGRES_URL ||
-  process.env.POSTGRES_PRISMA_URL ||
-  process.env.POSTGRES_URL_NON_POOLING ||
-  process.env.NEON_DATABASE_URL ||
-  process.env.DATABASE_PRIVATE_URL ||
-  process.env.PGDATABASE_URL;
-
-if (connectionString) {
-  logger.info('Initializing real PostgreSQL Pool with detected database connection string');
+if (process.env.DATABASE_URL) {
+  logger.info('Initializing real PostgreSQL Pool with DATABASE_URL');
   pool = new Pool({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 15000 // 15 seconds connection timeout
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000 // 10 seconds connection timeout
   });
 } else {
-  logger.warn('No PostgreSQL connection string detected. Falling back to pg-mem in-memory PostgreSQL emulator.');
+  logger.warn('DATABASE_URL is not set. Falling back to pg-mem in-memory PostgreSQL emulator.');
   isInMemory = true;
   
   try {
@@ -141,230 +132,9 @@ async function runMigrationsAndSeed(p) {
         phone VARCHAR(50),
         address TEXT,
         city VARCHAR(100),
-        country VARCHAR(100) DEFAULT 'Kenya',
-        email VARCHAR(255) UNIQUE,
-        license_number VARCHAR(100),
-        facility_type VARCHAR(50) DEFAULT 'hospital',
-        logo_url TEXT,
-        is_active BOOLEAN DEFAULT TRUE,
-        deleted_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    try {
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS facility_type VARCHAR(50) DEFAULT 'hospital'`);
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS license_number VARCHAR(100)`);
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
-      await p.query(`ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'Kenya'`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS subscriptions (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT UNIQUE,
-        plan VARCHAR(50) DEFAULT 'trial',
-        status VARCHAR(50) DEFAULT 'active',
-        expires_at TIMESTAMPTZ,
-        max_users INT DEFAULT 10,
-        max_counters INT DEFAULT 5,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    try {
-      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_users INT DEFAULT 10`);
-      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_counters INT DEFAULT 5`);
-      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS notes TEXT`);
-      await p.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
-      await p.query(`ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_pharmacy_id_key UNIQUE (pharmacy_id)`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS super_admins (
-        id SERIAL PRIMARY KEY,
-        full_name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role VARCHAR(50) DEFAULT 'super_admin',
-        is_active BOOLEAN DEFAULT TRUE,
-        reset_otp VARCHAR(20),
-        reset_otp_expires TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS pharmacy_settings (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT UNIQUE,
-        receipt_header TEXT,
-        receipt_footer TEXT,
-        receipt_show_logo BOOLEAN DEFAULT TRUE,
-        receipt_show_address BOOLEAN DEFAULT TRUE,
-        mpesa_till_number VARCHAR(50),
-        mpesa_paybill VARCHAR(50),
-        mpesa_account_name VARCHAR(100),
-        bank_name VARCHAR(100),
-        bank_account VARCHAR(100),
-        bank_branch VARCHAR(100),
-        currency VARCHAR(10) DEFAULT 'KES',
-        tax_rate DECIMAL(5,2) DEFAULT 0.00,
-        tax_name VARCHAR(50) DEFAULT 'VAT',
-        low_stock_alert_days INT DEFAULT 30,
-        expiry_alert_days INT DEFAULT 90,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS departments (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        name VARCHAR(100) NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    try {
-      await p.query(`ALTER TABLE departments ADD CONSTRAINT departments_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS counters (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        name VARCHAR(100) NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    try {
-      await p.query(`ALTER TABLE counters ADD CONSTRAINT counters_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS categories (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        name VARCHAR(100) NOT NULL,
-        description TEXT,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    try {
-      await p.query(`ALTER TABLE categories ADD CONSTRAINT categories_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS roles (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        name VARCHAR(100) NOT NULL,
-        permissions JSONB DEFAULT '[]',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    try {
-      await p.query(`ALTER TABLE roles ADD CONSTRAINT roles_pharmacy_id_name_key UNIQUE (name, pharmacy_id)`);
-    } catch (e) {}
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS suppliers (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        name VARCHAR(255) NOT NULL,
-        contact_person VARCHAR(255),
+        country VARCHAR(100),
         email VARCHAR(255),
-        phone VARCHAR(50),
-        address TEXT,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS stock_batches (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        product_id UUID,
-        batch_number VARCHAR(100),
-        quantity INT NOT NULL DEFAULT 0,
-        buying_price DECIMAL(10,2) DEFAULT 0.00,
-        selling_price DECIMAL(10,2) DEFAULT 0.00,
-        expiry_date DATE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS purchases (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        supplier_id INT,
-        invoice_number VARCHAR(100),
-        purchase_date DATE DEFAULT CURRENT_DATE,
-        total_amount DECIMAL(12,2) DEFAULT 0.00,
-        amount_paid DECIMAL(12,2) DEFAULT 0.00,
-        status VARCHAR(50) DEFAULT 'received',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS purchase_items (
-        id SERIAL PRIMARY KEY,
-        purchase_id INT,
-        product_id UUID,
-        quantity INT NOT NULL,
-        cost_price DECIMAL(10,2) DEFAULT 0.00,
-        selling_price DECIMAL(10,2) DEFAULT 0.00,
-        expiry_date DATE,
-        batch_number VARCHAR(100),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS sales (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        sale_number VARCHAR(100),
-        user_id INT,
-        patient_id INT,
-        customer_name VARCHAR(255),
-        total_amount DECIMAL(12,2) DEFAULT 0.00,
-        discount_amount DECIMAL(12,2) DEFAULT 0.00,
-        tax_amount DECIMAL(12,2) DEFAULT 0.00,
-        net_amount DECIMAL(12,2) DEFAULT 0.00,
-        amount_paid DECIMAL(12,2) DEFAULT 0.00,
-        payment_method VARCHAR(50) DEFAULT 'cash',
-        payment_status VARCHAR(50) DEFAULT 'paid',
-        status VARCHAR(50) DEFAULT 'completed',
-        counter_id INT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS sale_items (
-        id SERIAL PRIMARY KEY,
-        sale_id INT,
-        product_id UUID,
-        product_name VARCHAR(255),
-        quantity INT NOT NULL,
-        unit_price DECIMAL(10,2) DEFAULT 0.00,
-        total_price DECIMAL(10,2) DEFAULT 0.00,
-        batch_number VARCHAR(100),
-        expiry_date DATE,
+        logo_url TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -380,8 +150,6 @@ async function runMigrationsAndSeed(p) {
         pharmacy_id INT,
         permissions JSONB DEFAULT '[]',
         last_login TIMESTAMPTZ,
-        dha_license_number VARCHAR(100),
-        professional_title VARCHAR(100),
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -411,9 +179,6 @@ async function runMigrationsAndSeed(p) {
         email VARCHAR(255),
         address TEXT,
         county VARCHAR(100),
-        emergency_contact_name VARCHAR(255),
-        emergency_contact_phone VARCHAR(50),
-        emergency_contact_relation VARCHAR(100),
         next_of_kin_name VARCHAR(255),
         next_of_kin_phone VARCHAR(50),
         next_of_kin_relation VARCHAR(100),
@@ -472,181 +237,7 @@ async function runMigrationsAndSeed(p) {
         name VARCHAR(255) NOT NULL,
         category VARCHAR(100) NOT NULL,
         price DECIMAL(10,2) NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure visits table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS visits (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        patient_id INT NOT NULL,
-        visit_number VARCHAR(50),
-        visit_type VARCHAR(50) DEFAULT 'general',
-        department VARCHAR(50) DEFAULT 'general',
-        status VARCHAR(50) DEFAULT 'waiting',
-        priority VARCHAR(20) DEFAULT 'normal',
-        chief_complaint TEXT,
-        attending_doctor INT,
-        assigned_to INT,
-        notes TEXT,
-        consultation_fee DECIMAL(10,2) DEFAULT 0,
-        fee_paid BOOLEAN DEFAULT FALSE,
-        payment_method VARCHAR(50),
-        insurance_provider VARCHAR(150),
-        member_number VARCHAR(150),
-        auth_code VARCHAR(150),
-        copay_amount NUMERIC(10,2) DEFAULT 0,
-        created_by INT,
-        discharged_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure vitals table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS vitals (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        visit_id INT,
-        patient_id INT,
-        blood_pressure_systolic INT,
-        blood_pressure_diastolic INT,
-        pulse_rate INT,
-        temperature DECIMAL(4,1),
-        respiratory_rate INT,
-        oxygen_saturation INT,
-        weight DECIMAL(5,2),
-        height DECIMAL(5,2),
-        bmi DECIMAL(4,1),
-        recorded_by INT,
-        notes TEXT,
-        recorded_at TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure consultations table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS consultations (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        visit_id INT,
-        patient_id INT,
-        doctor_id INT,
-        presenting_complaint TEXT,
-        history_of_illness TEXT,
-        examination_findings TEXT,
-        diagnosis TEXT,
-        icd_code VARCHAR(20),
-        management_plan TEXT,
-        follow_up_date DATE,
-        follow_up_notes TEXT,
-        admit_patient BOOLEAN DEFAULT false,
-        referral TEXT,
-        encounter_id INT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure prescriptions table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS prescriptions (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        consultation_id INT,
-        visit_id INT,
-        patient_id INT,
-        doctor_id INT,
-        drug_name VARCHAR(255) NOT NULL,
-        dosage VARCHAR(100),
-        frequency VARCHAR(100),
-        duration VARCHAR(100),
-        route VARCHAR(50) DEFAULT 'oral',
-        instructions TEXT,
-        quantity INTEGER DEFAULT 1,
-        unit_price NUMERIC(10,2) DEFAULT 0,
-        status VARCHAR(30) DEFAULT 'pending',
-        dispensed_at TIMESTAMPTZ,
-        dispensed_by INT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure lab_requests table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS lab_requests (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        consultation_id INT,
-        visit_id INT,
-        patient_id INT,
-        doctor_id INT,
-        test_name VARCHAR(255) NOT NULL,
-        test_code VARCHAR(50),
-        urgency VARCHAR(20) DEFAULT 'routine',
-        notes TEXT,
-        status VARCHAR(30) DEFAULT 'pending',
-        result TEXT,
-        result_file_url TEXT,
-        resulted_at TIMESTAMPTZ,
-        resulted_by INT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure procedures table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS procedures (
-        id SERIAL PRIMARY KEY,
-        pharmacy_id INT,
-        consultation_id INT,
-        visit_id INT,
-        patient_id INT,
-        doctor_id INT,
-        procedure_name VARCHAR(255) NOT NULL,
-        procedure_code VARCHAR(50),
-        notes TEXT,
-        outcome TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure billing_items table exists
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS billing_items (
-        id SERIAL PRIMARY KEY,
-        facility_id INT,
-        pharmacy_id INT,
-        visit_id INT,
-        patient_id INT,
-        encounter_id INT,
-        service_order_id INT,
-        item_type VARCHAR(50) NOT NULL DEFAULT 'other',
-        item_name VARCHAR(255),
-        description VARCHAR(255),
-        service_code VARCHAR(100),
-        quantity INTEGER DEFAULT 1,
-        unit_price NUMERIC(10,2) DEFAULT 0,
-        total_price NUMERIC(10,2) DEFAULT 0,
-        paid_amount NUMERIC(10,2) DEFAULT 0,
-        status VARCHAR(50) DEFAULT 'pending',
-        payment_method VARCHAR(50),
-        reference_number VARCHAR(150),
-        insurance_provider VARCHAR(150),
-        member_number VARCHAR(150),
-        auth_code VARCHAR(150),
-        copay_amount NUMERIC(10,2) DEFAULT 0,
-        collected_by VARCHAR(100),
-        paid_at TIMESTAMPTZ,
-        waived_by VARCHAR(100),
-        waive_reason TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
 
@@ -667,21 +258,12 @@ async function runMigrationsAndSeed(p) {
       logger.info(`Running migration: ${sqlFile}`);
       const sqlContent = fs.readFileSync(filePath, 'utf8');
       
+      // Execute the migration content. Splitting by semicolons can sometimes fail if there are functions/triggers, 
+      // but for standard SQL schemas, running it in chunks or directly works. We will try executing it directly first.
       try {
         await p.query(sqlContent);
       } catch (sqlErr) {
-        // Fallback: split by semicolon and execute statement by statement
-        const stmts = sqlContent
-          .split(/;\s*$/m)
-          .map(s => s.trim())
-          .filter(s => s.length > 0 && !s.startsWith('--'));
-        for (const s of stmts) {
-          try {
-            await p.query(s);
-          } catch (stmtErr) {
-            // ignore unsupported PL/pgSQL function or trigger errors in in-memory test databases
-          }
-        }
+        logger.warn(`Skipped some migration commands in ${sqlFile}: ${sqlErr.message}`);
       }
     }
 
@@ -747,37 +329,6 @@ async function runMigrationsAndSeed(p) {
       `);
     } catch (e) {
       logger.error('Failed to create nursing_notes table:', e.message);
-    }
-
-    // Ensure injection_room_orders table exists early
-    try {
-      await p.query(`
-        CREATE TABLE IF NOT EXISTS injection_room_orders (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          visit_id INT,
-          patient_id INT,
-          consultation_id INT,
-          prescribed_by INT,
-          administered_by INT,
-          drug_name VARCHAR(255) NOT NULL,
-          dosage VARCHAR(100),
-          route VARCHAR(50),
-          frequency VARCHAR(50),
-          duration VARCHAR(50),
-          quantity INT DEFAULT 1,
-          instructions TEXT,
-          notes TEXT,
-          nurse_report TEXT,
-          status VARCHAR(50) DEFAULT 'pending',
-          product_id VARCHAR(100),
-          administered_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-      `);
-    } catch (e) {
-      logger.error('Failed to create injection_room_orders early:', e.message);
     }
 
     // Ensure doctor_round_notes table exists
@@ -1151,29 +702,6 @@ async function runMigrationsAndSeed(p) {
       }
     }
 
-    // Ensure all required columns exist on prescriptions table
-    try {
-      await p.query(`
-        ALTER TABLE prescriptions ALTER COLUMN consultation_id DROP NOT NULL;
-        ALTER TABLE prescriptions ALTER COLUMN doctor_id DROP NOT NULL;
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS price NUMERIC(10,2) DEFAULT 0;
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS unit_price NUMERIC(10,2) DEFAULT 0;
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS product_id VARCHAR(150);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS encounter_id VARCHAR(100);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS route VARCHAR(50) DEFAULT 'oral';
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS instructions TEXT;
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity NUMERIC DEFAULT 1;
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS dosage VARCHAR(100);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS frequency VARCHAR(100);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS duration VARCHAR(100);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS ddc_code VARCHAR(100);
-        ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS scientific_code VARCHAR(100);
-      `);
-    } catch (prErr) {
-      logger.error(`Error ensuring prescriptions columns: ${prErr.message}`);
-    }
-
     // Ensure audit_log and audit_logs tables support string/UUID record IDs
     try {
       await p.query(`ALTER TABLE audit_log ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text`);
@@ -1186,7 +714,7 @@ async function runMigrationsAndSeed(p) {
           id BIGSERIAL PRIMARY KEY,
           facility_id INT,
           pharmacy_id INT,
-          user_id VARCHAR(100),
+          user_id INT,
           action VARCHAR(100),
           table_name VARCHAR(100),
           record_id VARCHAR(100),
@@ -1194,7 +722,6 @@ async function runMigrationsAndSeed(p) {
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
-      await p.query(`ALTER TABLE audit_logs ALTER COLUMN user_id TYPE VARCHAR(100) USING user_id::text`);
       await p.query(`ALTER TABLE audit_logs ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text`);
     } catch (auditLogsErr) {}
 
@@ -1320,28 +847,59 @@ async function runMigrationsAndSeed(p) {
       { name: 'pharmacy_id', type: 'INT' },
       { name: 'item_name', type: 'VARCHAR(255)' },
       { name: 'description', type: 'VARCHAR(255)' },
-      { name: 'service_code', type: 'VARCHAR(100)' },
-      { name: 'paid_amount', type: 'NUMERIC DEFAULT 0' },
-      { name: 'reference_number', type: 'VARCHAR(150)' },
-      { name: 'insurance_provider', type: 'VARCHAR(150)' },
-      { name: 'member_number', type: 'VARCHAR(150)' },
-      { name: 'auth_code', type: 'VARCHAR(150)' },
-      { name: 'copay_amount', type: 'NUMERIC DEFAULT 0' },
-      { name: 'paid_at', type: 'TIMESTAMPTZ' },
-      { name: 'payment_method', type: 'VARCHAR(50)' },
-      { name: 'collected_by', type: 'VARCHAR(100)' },
-      { name: 'waived_by', type: 'VARCHAR(100)' }
+      { name: 'service_code', type: 'VARCHAR(100)' }
     ];
     for (const col of billingColumns) {
       try {
         await p.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
       } catch (colErr) {}
     }
+
     try {
-      await p.query(`ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100) USING collected_by::text`);
-    } catch (e) {}
+      await p.query(`ALTER TABLE billing_items DROP CONSTRAINT IF EXISTS billing_items_item_type_check`);
+      await p.query(`ALTER TABLE billing_items DROP CONSTRAINT IF EXISTS billing_items_status_check`);
+      await p.query(`ALTER TABLE injection_room_orders DROP CONSTRAINT IF EXISTS injection_room_orders_status_check`);
+      await p.query(`ALTER TABLE billing_items ALTER COLUMN total_price DROP EXPRESSION IF EXISTS`);
+    } catch (cErr) {}
+
     try {
-      await p.query(`ALTER TABLE billing_items ALTER COLUMN waived_by TYPE VARCHAR(100) USING waived_by::text`);
+      await p.query(`UPDATE billing_items SET facility_id = pharmacy_id WHERE facility_id IS NULL AND pharmacy_id IS NOT NULL`);
+      await p.query(`UPDATE billing_items SET pharmacy_id = facility_id WHERE pharmacy_id IS NULL AND facility_id IS NOT NULL`);
+      await p.query(`UPDATE billing_items SET item_name = description WHERE item_name IS NULL AND description IS NOT NULL`);
+      await p.query(`UPDATE billing_items SET description = item_name WHERE description IS NULL AND item_name IS NOT NULL`);
+    } catch (syncErr) {}
+
+    // Ensure patients columns exist
+    const patientColumns = [
+      { name: 'pharmacy_id', type: 'INT' },
+      { name: 'patient_number', type: 'VARCHAR(100)' },
+      { name: 'date_of_birth', type: 'DATE' },
+      { name: 'national_id', type: 'TEXT' },
+      { name: 'sha_number', type: 'TEXT' },
+      { name: 'email', type: 'VARCHAR(255)' },
+      { name: 'address', type: 'TEXT' },
+      { name: 'county', type: 'VARCHAR(100)' },
+      { name: 'next_of_kin_name', type: 'VARCHAR(255)' },
+      { name: 'next_of_kin_phone', type: 'VARCHAR(50)' },
+      { name: 'next_of_kin_relation', type: 'VARCHAR(100)' },
+      { name: 'blood_group', type: 'VARCHAR(20)' },
+      { name: 'allergies', type: 'TEXT' },
+      { name: 'chronic_conditions', type: 'TEXT' },
+      { name: 'occupation', type: 'VARCHAR(100)' },
+      { name: 'marital_status', type: 'VARCHAR(50)' },
+      { name: 'emirates_id', type: 'VARCHAR(100)' },
+      { name: 'nabidh_consent', type: "VARCHAR(20) DEFAULT 'opt_out'" },
+      { name: 'passport_number', type: 'VARCHAR(50)' },
+      { name: 'is_active', type: 'BOOLEAN DEFAULT TRUE' },
+      { name: 'updated_at', type: 'TIMESTAMPTZ DEFAULT NOW()' }
+    ];
+    for (const col of patientColumns) {
+      try {
+        await p.query(`ALTER TABLE patients ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
+      } catch (colErr) {}
+    }
+    try {
+      await p.query(`ALTER TABLE patients ALTER COLUMN pharmacy_id TYPE INT USING (CASE WHEN pharmacy_id::text ~ '^[0-9]+$' THEN pharmacy_id::text::integer ELSE NULL END)`);
     } catch (e) {}
 
     // Ensure visits columns exist
@@ -1350,11 +908,7 @@ async function runMigrationsAndSeed(p) {
       { name: 'mch_service', type: 'VARCHAR(50)' },
       { name: 'consultation_fee', type: 'DECIMAL(10,2) DEFAULT 0' },
       { name: 'fee_paid', type: 'BOOLEAN DEFAULT FALSE' },
-      { name: 'payment_method', type: 'VARCHAR(50)' },
-      { name: 'insurance_provider', type: 'VARCHAR(150)' },
-      { name: 'member_number', type: 'VARCHAR(150)' },
-      { name: 'auth_code', type: 'VARCHAR(150)' },
-      { name: 'copay_amount', type: 'NUMERIC DEFAULT 0' }
+      { name: 'payment_method', type: 'VARCHAR(50)' }
     ];
     for (const col of visitColumns) {
       try {
@@ -1468,6 +1022,12 @@ async function runMigrationsAndSeed(p) {
     } catch (otpColErr) {
       logger.error('Failed to add OTP columns:', otpColErr.message);
     }
+
+    // Ensure departments table type column is nullable with default
+    try {
+      await p.query(`ALTER TABLE departments ALTER COLUMN type DROP NOT NULL`);
+      await p.query(`ALTER TABLE departments ALTER COLUMN type SET DEFAULT 'general'`);
+    } catch (_) {}
 
     // Ensure subscriptions table exists with correct columns and unique constraint
     try {
@@ -1659,476 +1219,45 @@ async function runMigrationsAndSeed(p) {
       logger.warn('Admission fee setup error: ' + admFeeErr.message);
     }
 
-    // HR & Finance Premium Suite Migrations
-    try {
-      logger.info('Running HR & Finance schema migrations...');
-      await p.query(`
-        CREATE TABLE IF NOT EXISTS staff_profiles (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          user_id INT,
-          full_name VARCHAR(255) NOT NULL,
-          national_id VARCHAR(50),
-          email VARCHAR(255),
-          phone VARCHAR(50),
-          designation VARCHAR(100),
-          department VARCHAR(100),
-          employment_type VARCHAR(50) DEFAULT 'Full-Time',
-          basic_salary NUMERIC(12,2) DEFAULT 0.00,
-          house_allowance NUMERIC(12,2) DEFAULT 0.00,
-          transport_allowance NUMERIC(12,2) DEFAULT 0.00,
-          other_allowances NUMERIC(12,2) DEFAULT 0.00,
-          kra_pin VARCHAR(50),
-          nssf_number VARCHAR(50),
-          sha_number VARCHAR(50),
-          bank_name VARCHAR(100),
-          bank_account VARCHAR(100),
-          bank_branch VARCHAR(100),
-          council_license_number VARCHAR(100),
-          license_expiry_date DATE,
-          status VARCHAR(50) DEFAULT 'active',
-          date_joined DATE DEFAULT CURRENT_DATE,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS duty_rosters (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          staff_id INT NOT NULL,
-          shift_date DATE NOT NULL,
-          shift_type VARCHAR(50) NOT NULL,
-          department VARCHAR(100),
-          notes TEXT,
-          status VARCHAR(50) DEFAULT 'SCHEDULED',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS leave_requests (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          staff_id INT NOT NULL,
-          leave_type VARCHAR(50) NOT NULL,
-          start_date DATE NOT NULL,
-          end_date DATE NOT NULL,
-          days_count INT DEFAULT 1,
-          reason TEXT,
-          status VARCHAR(50) DEFAULT 'PENDING',
-          approved_by INT,
-          rejection_reason TEXT,
-          applied_at TIMESTAMPTZ DEFAULT NOW(),
-          actioned_at TIMESTAMPTZ
-        );
-
-        CREATE TABLE IF NOT EXISTS payroll (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id TEXT,
-          user_id VARCHAR(100),
-          staff_id INT,
-          employee_name VARCHAR(255) NOT NULL,
-          employee_email VARCHAR(255),
-          role VARCHAR(100),
-          month INT NOT NULL,
-          year INT NOT NULL,
-          basic_salary NUMERIC(12,2) DEFAULT 0.00,
-          allowances NUMERIC(12,2) DEFAULT 0.00,
-          paye NUMERIC(12,2) DEFAULT 0.00,
-          sha NUMERIC(12,2) DEFAULT 0.00,
-          nssf NUMERIC(12,2) DEFAULT 0.00,
-          housing_levy NUMERIC(12,2) DEFAULT 0.00,
-          other_deductions NUMERIC(12,2) DEFAULT 0.00,
-          deductions NUMERIC(12,2) DEFAULT 0.00,
-          net_salary NUMERIC(12,2) DEFAULT 0.00,
-          payment_status VARCHAR(50) DEFAULT 'Paid',
-          payment_date DATE DEFAULT CURRENT_DATE,
-          payment_method VARCHAR(50) DEFAULT 'Bank Transfer',
-          bank_name VARCHAR(100),
-          bank_account VARCHAR(100),
-          kra_pin VARCHAR(50),
-          notes TEXT,
-          created_by VARCHAR(100),
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- Ensure any existing payroll table has all necessary columns
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS paye NUMERIC(12,2) DEFAULT 0.00;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS sha NUMERIC(12,2) DEFAULT 0.00;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS nssf NUMERIC(12,2) DEFAULT 0.00;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS housing_levy NUMERIC(12,2) DEFAULT 0.00;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS other_deductions NUMERIC(12,2) DEFAULT 0.00;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'Paid';
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_date DATE DEFAULT CURRENT_DATE;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'Bank Transfer';
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100);
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS bank_account VARCHAR(100);
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS kra_pin VARCHAR(50);
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS notes TEXT;
-        ALTER TABLE payroll ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
-
-        CREATE TABLE IF NOT EXISTS payroll_records (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          user_id INT,
-          staff_id INT,
-          employee_name VARCHAR(255) NOT NULL,
-          employee_email VARCHAR(255),
-          role VARCHAR(100),
-          month INT NOT NULL,
-          year INT NOT NULL,
-          basic_salary NUMERIC(12,2) DEFAULT 0.00,
-          allowances NUMERIC(12,2) DEFAULT 0.00,
-          paye NUMERIC(12,2) DEFAULT 0.00,
-          sha NUMERIC(12,2) DEFAULT 0.00,
-          nssf NUMERIC(12,2) DEFAULT 0.00,
-          housing_levy NUMERIC(12,2) DEFAULT 0.00,
-          other_deductions NUMERIC(12,2) DEFAULT 0.00,
-          net_salary NUMERIC(12,2) DEFAULT 0.00,
-          payment_status VARCHAR(50) DEFAULT 'Paid',
-          payment_date DATE DEFAULT CURRENT_DATE,
-          payment_method VARCHAR(50) DEFAULT 'Bank Transfer',
-          bank_name VARCHAR(100),
-          bank_account VARCHAR(100),
-          kra_pin VARCHAR(50),
-          notes TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS petty_cash_transactions (
-          id SERIAL PRIMARY KEY,
-          pharmacy_id INT,
-          transaction_type VARCHAR(50) NOT NULL,
-          category VARCHAR(100) DEFAULT 'general',
-          amount NUMERIC(12,2) NOT NULL,
-          description TEXT NOT NULL,
-          payee_or_source VARCHAR(255),
-          voucher_number VARCHAR(100),
-          payment_method VARCHAR(50) DEFAULT 'cash',
-          recorded_by INT,
-          approved_by INT,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-      `);
-      logger.info('✅ HR & Finance tables successfully created and ready.');
-    } catch (hrErr) {
-      logger.warn('HR schema initialization warning: ' + hrErr.message);
-    }
-
-    // ── DATA HEALING & PATIENT ARCHIVE RESTORATION ────────────────────────────
-    try {
-      // 1. Reactivate all existing records and link orphan rows
-      await p.query(`
-        UPDATE patients SET is_active = true WHERE is_active IS NULL OR is_active = false;
-        UPDATE patients SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE visits SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE consultations SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE prescriptions SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE lab_requests SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE vitals SET pharmacy_id = 1 WHERE pharmacy_id IS NULL;
-        UPDATE billing_items SET facility_id = 1, pharmacy_id = 1 WHERE pharmacy_id IS NULL OR facility_id IS NULL;
-      `);
-
-      // 2. Check if we need to seed complete past patient archives
-      const patCountRes = await p.query(`SELECT COUNT(*) as count FROM patients`);
-      const patCount = parseInt(patCountRes.rows[0]?.count || 0);
-
-      if (patCount < 5) {
-        logger.info('🔄 Restoring comprehensive past patient medical records and archives...');
-        
-        const samplePatients = [
-          {
-            patient_number: 'PAT-2025-00101',
-            full_name: 'John Kamau Mwangi',
-            date_of_birth: '1982-04-15',
-            gender: 'male',
-            national_id: '24891024',
-            sha_number: 'SHA-889021-KE',
-            phone: '+254712345678',
-            email: 'john.kamau@example.com',
-            address: 'Kilimani, Argwings Kodhek Rd, Nairobi',
-            blood_group: 'O+',
-            allergies: 'Penicillin (Skin rash)',
-            chronic_conditions: 'Essential Hypertension',
-            emergency_contact_name: 'Mary Mwangi (Wife)',
-            emergency_contact_phone: '+254722334455'
-          },
-          {
-            patient_number: 'PAT-2025-00102',
-            full_name: 'Sarah Atieno Omondi',
-            date_of_birth: '1990-09-22',
-            gender: 'female',
-            national_id: '29871145',
-            sha_number: 'SHA-441209-KE',
-            phone: '+254723456789',
-            email: 'sarah.atieno@example.com',
-            address: 'Westlands, Ring Road, Nairobi',
-            blood_group: 'A+',
-            allergies: 'None known',
-            chronic_conditions: 'Type 2 Diabetes Mellitus',
-            emergency_contact_name: 'Peter Omondi (Brother)',
-            emergency_contact_phone: '+254733445566'
-          },
-          {
-            patient_number: 'PAT-2025-00103',
-            full_name: 'David Kiprono Cheruiyot',
-            date_of_birth: '1975-11-03',
-            gender: 'male',
-            national_id: '18902341',
-            sha_number: 'SHA-992104-KE',
-            phone: '+254734567890',
-            email: 'david.kiprono@example.com',
-            address: 'Langata, South C, Nairobi',
-            blood_group: 'B+',
-            allergies: 'Sulfa drugs',
-            chronic_conditions: 'Asthma, Allergic Rhinitis',
-            emergency_contact_name: 'Jane Cheruiyot (Spouse)',
-            emergency_contact_phone: '+254744556677'
-          },
-          {
-            patient_number: 'PAT-2025-00104',
-            full_name: 'Grace Wanjiru Njoroge',
-            date_of_birth: '1995-02-18',
-            gender: 'female',
-            national_id: '33410298',
-            sha_number: 'SHA-102948-KE',
-            phone: '+254745678901',
-            email: 'grace.wanjiru@example.com',
-            address: 'Parklands, 3rd Avenue, Nairobi',
-            blood_group: 'AB+',
-            allergies: 'Aspirin, NSAIDs',
-            chronic_conditions: 'Peptic Ulcer Disease',
-            emergency_contact_name: 'James Njoroge (Father)',
-            emergency_contact_phone: '+254755667788'
-          },
-          {
-            patient_number: 'PAT-2025-00105',
-            full_name: 'Brian Wekesa Wafula',
-            date_of_birth: '1988-07-30',
-            gender: 'male',
-            national_id: '27194021',
-            sha_number: 'SHA-772910-KE',
-            phone: '+254756789012',
-            email: 'brian.wekesa@example.com',
-            address: 'Kasabuni, Roysambu, Nairobi',
-            blood_group: 'O-',
-            allergies: 'None reported',
-            chronic_conditions: 'None',
-            emergency_contact_name: 'Eunice Wafula (Sister)',
-            emergency_contact_phone: '+254766778899'
-          },
-          {
-            patient_number: 'PAT-2025-00106',
-            full_name: 'Mercy Nyambura Kimani',
-            date_of_birth: '2001-12-11',
-            gender: 'female',
-            national_id: '37890123',
-            sha_number: 'SHA-338190-KE',
-            phone: '+254767890123',
-            email: 'mercy.kimani@example.com',
-            address: 'Kileleshwa, Gatundu Rd, Nairobi',
-            blood_group: 'O+',
-            allergies: 'Latex',
-            chronic_conditions: 'Migraine',
-            emergency_contact_name: 'Esther Kimani (Mother)',
-            emergency_contact_phone: '+254777889900'
-          }
-        ];
-
-        for (let i = 0; i < samplePatients.length; i++) {
-          const pat = samplePatients[i];
-          const insPatRes = await p.query(`
-            INSERT INTO patients (
-              pharmacy_id, patient_number, full_name, date_of_birth, gender,
-              national_id, sha_number, phone, email, address, blood_group,
-              allergies, chronic_conditions, emergency_contact_name, emergency_contact_phone,
-              is_active, created_at, updated_at
-            ) VALUES (
-              1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-              true, NOW() - INTERVAL '${(i + 1) * 7} days', NOW()
-            ) RETURNING id
-          `, [
-            pat.patient_number, pat.full_name, pat.date_of_birth, pat.gender,
-            pat.national_id, pat.sha_number, pat.phone, pat.email, pat.address,
-            pat.blood_group, pat.allergies, pat.chronic_conditions,
-            pat.emergency_contact_name, pat.emergency_contact_phone
-          ]);
-
-          const patId = insPatRes.rows[0].id;
-
-          // Add past visits for this patient
-          const visitConfigs = [
-            {
-              daysAgo: (i + 1) * 6,
-              status: 'discharged',
-              visit_type: 'outpatient',
-              complaint: i === 0 ? 'Severe headache and elevated blood pressure readings at home' :
-                         i === 1 ? 'Routine glycemic check-up and mild peripheral numbness' :
-                         i === 2 ? 'Shortness of breath and persistent chest tightness during morning runs' :
-                         i === 3 ? 'Epigastric burning pain aggravated by spicy food, postprandial nausea' :
-                         i === 4 ? 'High-grade fever with chills, body aches and fatigue for 3 days' :
-                                   'Recurrent unilateral throbbing headache with photophobia',
-              diagnosis: i === 0 ? 'Essential Hypertension - Moderate Severity (ICD-10: I10)' :
-                         i === 1 ? 'Type 2 Diabetes Mellitus with Peripheral Neuropathy (ICD-10: E11.4)' :
-                         i === 2 ? 'Moderate Persistent Asthma with Bronchospasm (ICD-10: J45.40)' :
-                         i === 3 ? 'Acute Peptic Ulcer Disease / Gastroduodenitis (ICD-10: K27.9)' :
-                         i === 4 ? 'Plasmodium Falciparum Malaria - Uncomplicated (ICD-10: B50.9)' :
-                                   'Classic Migraine without Aura (ICD-10: G43.0)',
-              bp_sys: i === 0 ? 155 : 128,
-              bp_dia: i === 0 ? 98 : 82,
-              pulse: 78,
-              temp: i === 4 ? 38.8 : 36.7,
-              spo2: 98,
-              weight: 72 + i * 2,
-              drugs: i === 0 ? [{ name: 'Amlodipine 5mg', dose: '1 tab OD', freq: 'Daily', days: '30 days', qty: 30 }] :
-                     i === 1 ? [{ name: 'Metformin 500mg', dose: '1 tab BD', freq: 'Twice daily', days: '30 days', qty: 60 }] :
-                     i === 2 ? [{ name: 'Salbutamol Inhaler 100mcg', dose: '2 puffs PRN', freq: 'As needed', days: '30 days', qty: 1 }] :
-                     i === 3 ? [{ name: 'Omeprazole 20mg', dose: '1 cap OD before meals', freq: 'Daily', days: '14 days', qty: 14 }] :
-                     i === 4 ? [{ name: 'Artemether + Lumefantrine (Coartem)', dose: '4 tabs at 0, 8, 24, 36, 48, 60h', freq: 'As directed', days: '3 days', qty: 24 }] :
-                               [{ name: 'Sumatriptan 50mg', dose: '1 tab at onset', freq: 'PRN', days: '10 days', qty: 6 }]
-            }
-          ];
-
-          for (const vc of visitConfigs) {
-            const vNum = `VIS-2025-${1000 + i * 10}`;
-            const insVisRes = await p.query(`
-              INSERT INTO visits (
-                pharmacy_id, patient_id, visit_number, visit_type, status, priority,
-                chief_complaint, consultation_fee, fee_paid, payment_method,
-                created_at, updated_at
-              ) VALUES (
-                1, $1, $2, $3, $4, 'normal',
-                $5, 500, true, 'cash',
-                NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-              ) RETURNING id
-            `, [patId, vNum, vc.visit_type, vc.status, vc.complaint]);
-
-            const visitId = insVisRes.rows[0].id;
-
-            // Insert Vitals
-            await p.query(`
-              INSERT INTO vitals (
-                pharmacy_id, visit_id, patient_id, blood_pressure_systolic, blood_pressure_diastolic,
-                pulse_rate, temperature, oxygen_saturation, weight, recorded_at, created_at
-              ) VALUES (
-                1, $1, $2, $3, $4, $5, $6, $7, $8,
-                NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-              )
-            `, [visitId, patId, vc.bp_sys, vc.bp_dia, vc.pulse, vc.temp, vc.spo2, vc.weight]);
-
-            // Insert Consultation Record
-            await p.query(`
-              INSERT INTO consultations (
-                pharmacy_id, visit_id, patient_id, doctor_id, diagnosis, presenting_complaint,
-                history_of_illness, examination_findings, management_plan,
-                follow_up_date, follow_up_notes, created_at, updated_at
-              ) VALUES (
-                1, $1, $2, 1, $3, $4,
-                'Patient presented with symptoms ongoing for several days.',
-                'General condition fair, alert and oriented. Systemic exams documented.',
-                'Prescribed oral regimen, lifestyle dietary advice and follow-up in 2 weeks.',
-                CURRENT_DATE + INTERVAL '14 days', 'Review blood pressure and symptoms chart',
-                NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-              )
-            `, [visitId, patId, vc.diagnosis, vc.complaint]);
-
-            // Insert Prescriptions
-            for (const d of vc.drugs) {
-              await p.query(`
-                INSERT INTO prescriptions (
-                  pharmacy_id, visit_id, patient_id, drug_name, dosage, frequency,
-                  duration, quantity, instructions, status, created_at, updated_at
-                ) VALUES (
-                  1, $1, $2, $3, $4, $5, $6, $7, 'Take after meals with water', 'dispensed',
-                  NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-                )
-              `, [visitId, patId, d.name, d.dose, d.freq, d.days, d.qty]);
-            }
-
-            // Insert Lab Request / Result
-            await p.query(`
-              INSERT INTO lab_requests (
-                pharmacy_id, visit_id, patient_id, test_name, test_code, urgency, status,
-                result, result_value, result_unit, reference_range, technician_notes,
-                created_at, updated_at
-              ) VALUES (
-                1, $1, $2, 'Comprehensive Metabolic & Diagnostic Screen', 'CMS-01', 'routine', 'completed',
-                'Within normal physiological parameters', 'Normal', 'Index', 'Normal', 'Verified by laboratory scientist',
-                NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-              )
-            `, [visitId, patId]);
-
-            // Insert Billing Item
-            await p.query(`
-              INSERT INTO billing_items (
-                pharmacy_id, facility_id, visit_id, patient_id, item_name, item_type,
-                unit_price, quantity, total_price, paid_amount, status, payment_method,
-                created_at, updated_at
-              ) VALUES (
-                1, 1, $1, $2, 'Doctor Consultation & Clinical Assessment', 'consultation',
-                500, 1, 500, 500, 'paid', 'cash',
-                NOW() - INTERVAL '${vc.daysAgo} days', NOW() - INTERVAL '${vc.daysAgo} days'
-              )
-            `, [visitId, patId]);
-          }
-        }
-        logger.info('✅ Past patient master database and clinical records successfully restored.');
-      }
-    } catch (healErr) {
-      logger.warn('Patient archival restoration warning: ' + healErr.message);
-    }
-
   } catch (err) {
     logger.error('Error during database schema migrations/seeding:', err);
   }
 }
 
-// Create stable pool proxy so all modules (controllers, models) retain the correct live instance
-const poolProxy = new Proxy({}, {
-  get(target, prop) {
-    if (prop === 'connect') {
-      return async function () {
-        const client = await pool.connect.apply(pool, arguments);
-        const pharmacyId = tenantStorage.getStore();
-        if (pharmacyId && !isInMemory && client && client.query) {
-          try {
-            await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
-          } catch (err) {
-            logger.error('Failed to set SET LOCAL in connect:', err.message);
-          }
-        }
-        return client;
-      };
-    }
-    if (prop === 'query') {
-      return async function (text, params) {
-        const pharmacyId = tenantStorage.getStore();
-        if (pharmacyId && !isInMemory) {
-          let client;
-          try {
-            client = await pool.connect();
-            await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
-            const res = await client.query(text, params);
-            return res;
-          } finally {
-            if (client && client.release) client.release();
-          }
-        } else {
-          return pool.query.apply(pool, [text, params]);
-        }
-      };
-    }
-    if (typeof pool[prop] === 'function') {
-      return pool[prop].bind(pool);
-    }
-    return pool[prop];
-  },
-  set(target, prop, value) {
-    pool[prop] = value;
-    return true;
-  }
-});
+// Overwrite pool.query and pool.connect to automatically inject tenant context for RLS
+if (pool) {
+  const originalConnect = pool.connect;
+  const originalQuery = pool.query;
 
-module.exports = { pool: poolProxy, connectDB, tenantStorage };
+  pool.connect = async function () {
+    const client = await originalConnect.apply(pool, arguments);
+    const pharmacyId = tenantStorage.getStore();
+    if (pharmacyId && !isInMemory) {
+      try {
+        await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
+      } catch (err) {
+        logger.error('Failed to set SET LOCAL in connect:', err.message);
+      }
+    }
+    return client;
+  };
+
+  pool.query = async function (text, params) {
+    const pharmacyId = tenantStorage.getStore();
+    if (pharmacyId && !isInMemory) {
+      let client;
+      try {
+        client = await originalConnect.apply(pool);
+        await client.query(`SET LOCAL app.current_pharmacy_id = '${pharmacyId}'`);
+        const res = await client.query(text, params);
+        return res;
+      } finally {
+        if (client) client.release();
+      }
+    } else {
+      return originalQuery.apply(pool, [text, params]);
+    }
+  };
+}
+
+module.exports = { pool, connectDB, tenantStorage };

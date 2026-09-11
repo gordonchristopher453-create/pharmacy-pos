@@ -499,7 +499,6 @@ export default function POSPage() {
   const [selectedRx, setSelectedRx] = useState(null);
   const [rxPayment, setRxPayment] = useState(null);
   const [rxLoading, setRxLoading] = useState(false);
-  const [rxTypeFilter, setRxTypeFilter] = useState('all');
   const [showCart, setShowCart] = useState(false);
   const [discountInput, setDiscountInput] = useState('');
   const [mpesaCode, setMpesaCode] = useState('');
@@ -543,7 +542,8 @@ export default function POSPage() {
   const fetchRxQueue = useCallback(async () => {
     setRxLoading(true);
     try {
-      const res = await api.get(`/consultations/pharmacy-queue?all_dates=true&include_inpatient=true`);
+      const today = new Date().toISOString().split('T')[0];
+      const res = await api.get(`/consultations/pharmacy-queue?date_from=${today}&date_to=${today}`);
       setRxQueue(res.data.data || []);
     } catch {}
     finally { setRxLoading(false); }
@@ -1038,67 +1038,29 @@ export default function POSPage() {
         {/* TAB 2: DOCTOR PRESCRIPTION QUEUE */}
         {tab === 'rx_queue' && (
           <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>Doctor Prescriptions Dispense Queue</h2>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Electronic prescriptions sent from doctor consultation rooms & inpatient wards</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Electronic prescriptions sent from doctor consultation rooms</p>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ display: 'flex', background: 'var(--bg-surface)', padding: 3, borderRadius: 10, border: '1px solid var(--border)' }}>
-                  <button
-                    onClick={() => setRxTypeFilter('all')}
-                    style={{
-                      padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                      background: rxTypeFilter === 'all' ? 'var(--accent)' : 'transparent',
-                      color: rxTypeFilter === 'all' ? '#0F1612' : 'var(--text-muted)'
-                    }}
-                  >
-                    All ({rxQueue.length})
-                  </button>
-                  <button
-                    onClick={() => setRxTypeFilter('opd')}
-                    style={{
-                      padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                      background: rxTypeFilter === 'opd' ? 'var(--accent)' : 'transparent',
-                      color: rxTypeFilter === 'opd' ? '#0F1612' : 'var(--text-muted)'
-                    }}
-                  >
-                    💊 OPD ({rxQueue.filter(r => !r.is_inpatient).length})
-                  </button>
-                  <button
-                    onClick={() => setRxTypeFilter('inpatient')}
-                    style={{
-                      padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                      background: rxTypeFilter === 'inpatient' ? 'var(--accent)' : 'transparent',
-                      color: rxTypeFilter === 'inpatient' ? '#0F1612' : 'var(--text-muted)'
-                    }}
-                  >
-                    🏥 Inpatient ({rxQueue.filter(r => r.is_inpatient).length})
-                  </button>
-                </div>
-                <button onClick={fetchRxQueue} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
-                  <RefreshCw size={14} color="var(--accent)" /> Refresh Queue
-                </button>
-              </div>
+              <button onClick={fetchRxQueue} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+                <RefreshCw size={14} color="var(--accent)" /> Refresh Queue
+              </button>
             </div>
 
             {rxLoading ? (
               <div style={{ textAlign: 'center', padding: 80 }}><Loader size={32} style={{ animation: 'spin 0.8s linear infinite', color: 'var(--accent)' }}/></div>
-            ) : rxQueue.filter(rx => rxTypeFilter === 'opd' ? !rx.is_inpatient : rxTypeFilter === 'inpatient' ? rx.is_inpatient : true).length === 0 ? (
+            ) : rxQueue.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '60px 20px', background: 'var(--bg-surface)', borderRadius: 16, border: '1px solid var(--border)' }}>
                 <div style={{ width: 54, height: 54, borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
                   <Pill size={28} color="var(--accent)" />
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>No Pending Prescriptions Found</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-                  {rxTypeFilter === 'opd' ? 'No outpatient (OPD) prescriptions waiting.' : rxTypeFilter === 'inpatient' ? 'No inpatient ward prescriptions waiting.' : 'Prescriptions dispatched by doctors will automatically appear here.'}
-                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>No Pending Prescriptions</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Prescriptions dispatched by doctors will automatically appear here</div>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {rxQueue
-                  .filter(rx => rxTypeFilter === 'opd' ? !rx.is_inpatient : rxTypeFilter === 'inpatient' ? rx.is_inpatient : true)
-                  .map(rx => (
+                {rxQueue.map(rx => (
                   <div key={rx.id} onClick={() => openRxModal(rx)}
                     style={{ background: 'var(--bg-surface)', borderRadius: 16, border: '1px solid var(--border)', padding: 20, cursor: 'pointer', transition: 'all 0.2s' }}
                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
@@ -1106,18 +1068,9 @@ export default function POSPage() {
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                       <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                           <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>{rx.patient_name}</span>
                           <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 6 }}>{rx.patient_number}</span>
-                          {rx.is_inpatient ? (
-                            <span style={{ fontSize: 11, background: '#3b82f620', color: '#3b82f6', padding: '2px 8px', borderRadius: 6, fontWeight: 800 }}>
-                              🏥 INPATIENT {rx.ward_name ? `• ${rx.ward_name}` : ''} {rx.bed_number ? `• Bed ${rx.bed_number}` : ''}
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: 11, background: '#10b98120', color: '#10b981', padding: '2px 8px', borderRadius: 6, fontWeight: 800 }}>
-                              💊 OPD OUTPATIENT
-                            </span>
-                          )}
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Dr. {rx.doctor_name || 'Consultant Doctor'} • Gender: {rx.gender || '—'}</div>
                         {rx.diagnosis && <div style={{ fontSize: 13, color: 'var(--accent)', marginTop: 4, fontWeight: 700 }}>Diagnosis: {rx.diagnosis}</div>}

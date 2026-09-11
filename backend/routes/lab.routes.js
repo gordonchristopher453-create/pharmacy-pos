@@ -29,6 +29,8 @@ router.get('/search', async (req, res) => {
   }
 });
 
+
+
 // Lab queue – list pending lab requests
 router.get('/queue', protect, async (req, res) => {
   try {
@@ -39,13 +41,14 @@ router.get('/queue', protect, async (req, res) => {
       JOIN patients p ON lr.patient_id::text = p.id::text
       LEFT JOIN visits v ON lr.visit_id::text = v.id::text
       WHERE (lr.pharmacy_id::text = $1::text OR lr.pharmacy_id IS NULL) AND (lr.status = 'pending' OR lr.status IS NULL)
-      ORDER BY lr.created_at DESC, lr.id DESC
+      ORDER BY lr.created_at DESC
     `, [req.pharmacy_id]);
     res.json({ success: true, data: result.rows });
   } catch(e) {
     res.status(500).json({ success: false, message: e.message });
   }
 });
+
 
 // Alias for test compatibility
 router.get('/requests', async (req, res) => {
@@ -57,7 +60,7 @@ router.get('/requests', async (req, res) => {
        JOIN patients p ON lr.patient_id::text = p.id::text
        LEFT JOIN visits v ON lr.visit_id::text = v.id::text
        WHERE (lr.pharmacy_id::text = $1::text OR lr.pharmacy_id IS NULL) AND (lr.status = 'pending' OR lr.status IS NULL)
-       ORDER BY lr.created_at DESC, lr.id DESC`,
+       ORDER BY lr.created_at DESC`,
       [req.pharmacy_id]
     );
     res.json({ success: true, data: result.rows });
@@ -66,13 +69,15 @@ router.get('/requests', async (req, res) => {
   }
 });
 
+module.exports = router;
+
 // Post lab result
 router.put('/requests/:id/result', protect, async (req, res) => {
   try {
     const { pool } = require('../config/db');
     const { result, result_value, result_unit, result_flag, reference_range, notes } = req.body;
     const query = await pool.query(
-      `UPDATE lab_requests SET status='completed', result=$1, result_value=$2, result_unit=$3, result_flag=$4, reference_range=$5, technician_notes=$6, resulted_at=NOW(), resulted_by=$7 WHERE id::text=$8::text AND (pharmacy_id::text=$9::text OR pharmacy_id IS NULL) RETURNING *`,
+      `UPDATE lab_requests SET status='completed', result=$1, result_value=$2, result_unit=$3, result_flag=$4, reference_range=$5, technician_notes=$6, resulted_at=NOW(), resulted_by=$7 WHERE id=$8 AND pharmacy_id=$9 RETURNING *`,
       [result, result_value, result_unit, result_flag, reference_range, notes, req.user.id, req.params.id, req.pharmacy_id]
     );
     if (query.rows.length === 0) return res.status(404).json({ success: false, message: 'Lab request not found' });
@@ -80,7 +85,7 @@ router.put('/requests/:id/result', protect, async (req, res) => {
     if (query.rows[0].visit_id) {
       await pool.query(`
         UPDATE visits SET status='with_doctor', updated_at=NOW()
-        WHERE id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL) AND UPPER(status) IN ('LAB', 'WITH_LAB', 'WAITING_LAB', 'WITH_DOCTOR', 'RADIOLOGY', 'WAITING_RADIOLOGY')
+        WHERE id=$1 AND pharmacy_id=$2 AND UPPER(status) IN ('LAB', 'WITH_LAB', 'WAITING_LAB', 'WITH_DOCTOR', 'RADIOLOGY', 'WAITING_RADIOLOGY')
       `, [query.rows[0].visit_id, req.pharmacy_id]);
 
       const io = req.app.get('io');
@@ -95,5 +100,3 @@ router.put('/requests/:id/result', protect, async (req, res) => {
     res.status(500).json({ success: false, message: e.message });
   }
 });
-
-module.exports = router;

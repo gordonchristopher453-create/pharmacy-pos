@@ -102,7 +102,6 @@ function DeptIndex() {
     case 'laboratory':    return <LabPage />;
     case 'pharmacy':   return <POSPage />;
     case 'accountant':         return <UsersPage />;
-    case 'finance':    return <FinancePage />;
     case 'hr':         return <HRDashboardPage />;
     default: return <div style={{ padding:40, textAlign:'center', color:'var(--text-faint)' }}>Select a section above</div>;
   }
@@ -182,7 +181,6 @@ export default function App() {
           <Route path="finance"   element={<ProtectedRoute roles={["accountant","pharmacist","facility_admin","admin","cashier"]}><ErrorBoundary><FinancePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="reports"   element={<ProtectedRoute roles={['accountant','facility_admin','admin','receptionist','pharmacist','lab_technician','cashier']}><ErrorBoundary><ReportsPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="users"     element={<ProtectedRoute roles={['facility_admin','admin','accountant']}><ErrorBoundary><UsersPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="hr"        element={<ProtectedRoute roles={['facility_admin','admin','accountant']}><ErrorBoundary><HRDashboardPage /></ErrorBoundary></ProtectedRoute>} />
           
           <Route path="reports/profit" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><ProfitReportPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="reports/sales" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><SalesSummaryPage /></ErrorBoundary></ProtectedRoute>} />

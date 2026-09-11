@@ -88,345 +88,101 @@ const getBillingItems = async (req, res) => {
 };
 
 
-// ── Ensure schema is resilient against legacy column types ──
-let billingSchemaChecked = false;
-const ensureBillingSchema = async () => {
-  if (billingSchemaChecked) return;
-  try {
-    await pool.query(`
-      ALTER TABLE billing_items 
-        ADD COLUMN IF NOT EXISTS facility_id INT,
-        ADD COLUMN IF NOT EXISTS pharmacy_id INT,
-        ADD COLUMN IF NOT EXISTS item_name VARCHAR(255),
-        ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS collected_by VARCHAR(100),
-        ADD COLUMN IF NOT EXISTS waived_by VARCHAR(100),
-        ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
-        ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50),
-        ADD COLUMN IF NOT EXISTS reference_number VARCHAR(150),
-        ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150),
-        ADD COLUMN IF NOT EXISTS member_number VARCHAR(150),
-        ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150),
-        ADD COLUMN IF NOT EXISTS copay_amount NUMERIC(10,2) DEFAULT 0;
-    `);
-  } catch (_) {}
-
-  try {
-    await pool.query(`ALTER TABLE billing_items ALTER COLUMN collected_by TYPE VARCHAR(100) USING collected_by::text;`);
-  } catch (_) {}
-
-  try {
-    await pool.query(`ALTER TABLE billing_items ALTER COLUMN waived_by TYPE VARCHAR(100) USING waived_by::text;`);
-  } catch (_) {}
-
-  try {
-    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN user_id TYPE VARCHAR(100) USING user_id::text;`);
-  } catch (_) {}
-
-  try {
-    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN record_id TYPE VARCHAR(100) USING record_id::text;`);
-  } catch (_) {}
-
-  billingSchemaChecked = true;
-};
-
-// ── Proper Financial Summary Report (Receptionist Daily / Admin & HR Date Range) ──
+// ── Daily Summary Report (Receptionist Billing) ─────────────
 const getDailySummary = async (req, res) => {
   try {
+    const { date } = req.query;
     const pid = req.pharmacy_id;
-    const today = new Date().toISOString().split('T')[0];
+    const targetDate = date || new Date().toISOString().split('T')[0];
 
-    // Ensure columns exist on-the-fly (self-healing for any database instance)
-    await ensureBillingSchema();
-
-    const userRole = (req.user?.role || '').toLowerCase();
-    const userPerms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
-    const isAdminOrHR = [
-      'super_admin', 'facility_admin', 'admin', 'hr', 'hr_manager', 'accountant'
-    ].includes(userRole) ||
-      userPerms.includes('can_view_financial_reports') ||
-      userPerms.includes('can_view_revenue_reports') ||
-      userPerms.includes('can_view_all_reports');
-
-    let targetDateFrom = req.query.date_from || req.query.start_date || req.query.date || today;
-    let targetDateTo = req.query.date_to || req.query.end_date || req.query.date || targetDateFrom;
-
-    let summaryRes;
-    try {
-      summaryRes = await pool.query(`
-        SELECT
-          COUNT(*)                                                        AS total_items,
-          COUNT(DISTINCT patient_id)                                      AS total_patients,
-          COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
-          COUNT(*) FILTER (WHERE status='pending' OR status='partial')   AS pending_count,
-          COUNT(*) FILTER (WHERE status='waived')                         AS waived_count,
-          COALESCE(SUM(total_price),0)                                    AS total_billed,
-          COALESCE(SUM(CASE 
-            WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
-            ELSE 0 END), 0)                                               AS total_collected,
-          COALESCE(SUM(CASE 
-            WHEN status='pending' THEN total_price
-            WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
-            ELSE 0 END), 0)                                               AS total_pending,
-          COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0)     AS total_waived,
-          COALESCE(SUM(CASE 
-            WHEN LOWER(COALESCE(payment_method,''))='cash' AND status IN ('paid','partial') 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            ELSE 0 END), 0) AS cash_collected,
-          COALESCE(SUM(CASE 
-            WHEN LOWER(COALESCE(payment_method,''))='mpesa' AND status IN ('paid','partial') 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            ELSE 0 END), 0) AS mpesa_collected,
-          COALESCE(SUM(CASE 
-            WHEN (LOWER(COALESCE(payment_method,'')) IN ('insurance','nhif','sha') OR status IN ('insurance','nhif','sha')) 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            ELSE 0 END), 0) AS insurance_collected,
-          COALESCE(SUM(CASE 
-            WHEN LOWER(COALESCE(payment_method,''))='bank' AND status IN ('paid','partial') 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            ELSE 0 END), 0) AS bank_collected,
-          COALESCE(SUM(CASE 
-            WHEN LOWER(COALESCE(payment_method,''))='corporate' 
-              THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-            ELSE 0 END), 0) AS corporate_collected
-        FROM billing_items
-        WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
-          AND (
-            (DATE(created_at) BETWEEN $2 AND $3)
-            OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
-          )
-      `, [pid, targetDateFrom, targetDateTo]);
-    } catch (primaryErr) {
-      logger.warn('Primary summary query failed, running resilient fallback:', primaryErr.message);
-      summaryRes = await pool.query(`
-        SELECT
-          COUNT(*) AS total_items,
-          COUNT(DISTINCT patient_id) AS total_patients,
-          COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
-          COUNT(*) FILTER (WHERE status='pending' OR status='partial') AS pending_count,
-          COUNT(*) FILTER (WHERE status='waived') AS waived_count,
-          COALESCE(SUM(total_price),0) AS total_billed,
-          COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS total_collected,
-          COALESCE(SUM(total_price) FILTER (WHERE status IN ('pending', 'partial')),0) AS total_pending,
-          COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0) AS total_waived,
-          COALESCE(SUM(total_price) FILTER (WHERE status='paid'), 0) AS cash_collected,
-          0 AS mpesa_collected,
-          COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance', 'nhif', 'sha')), 0) AS insurance_collected,
-          0 AS bank_collected,
-          COALESCE(SUM(total_price) FILTER (WHERE status='corporate'), 0) AS corporate_collected
-        FROM billing_items
-        WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
-          AND DATE(created_at) BETWEEN $2 AND $3
-      `, [pid, targetDateFrom, targetDateTo]);
-    }
-
-    const byMethodRes = await pool.query(`
-      SELECT 
-        COALESCE(LOWER(payment_method), 'cash') AS payment_method,
-        COUNT(*) AS count,
-        COALESCE(SUM(CASE 
-          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
-            THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-          WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
-          ELSE 0 END), 0) AS amount
+    const summary = await pool.query(`
+      SELECT
+        COUNT(*)                                                        AS total_items,
+        COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
+        COUNT(*) FILTER (WHERE status='pending')                        AS pending_count,
+        COUNT(*) FILTER (WHERE status='waived')                         AS waived_count,
+        COALESCE(SUM(total_price),0)                                    AS total_billed,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS total_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE status='pending'),0)    AS total_pending,
+        COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0)     AS total_waived,
+        COALESCE(SUM(total_price) FILTER (WHERE payment_method='cash' AND status='paid'),0) AS cash_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE payment_method='mpesa' AND status='paid'),0) AS mpesa_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance','nhif','sha') OR payment_method IN ('insurance','nhif','sha')),0) AS insurance_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE payment_method='bank' AND status='paid'),0) AS bank_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE payment_method='corporate'),0) AS corporate_collected
       FROM billing_items
-      WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
-        AND (
-          (DATE(created_at) BETWEEN $2 AND $3)
-          OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
-        )
-        AND (status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (status='partial' AND COALESCE(paid_amount, 0) > 0))
-      GROUP BY COALESCE(LOWER(payment_method), 'cash')
+      WHERE facility_id=$1 AND DATE(created_at)=$2
+    `, [pid, targetDate]);
+
+    const byMethod = await pool.query(`
+      SELECT 
+        COALESCE(payment_method, 'cash') AS payment_method,
+        COUNT(*) AS count,
+        COALESCE(SUM(total_price), 0) AS amount
+      FROM billing_items
+      WHERE facility_id=$1 AND DATE(created_at)=$2 AND status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')
+      GROUP BY COALESCE(payment_method, 'cash')
       ORDER BY amount DESC
-    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
+    `, [pid, targetDate]);
 
-    const byTypeRes = await pool.query(`
-      SELECT 
-        COALESCE(item_type, 'other') AS item_type,
-        COUNT(*) AS count,
-        COALESCE(SUM(total_price), 0) AS billed_amount,
-        COALESCE(SUM(CASE 
-          WHEN status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
-            THEN (CASE WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount ELSE total_price END)
-          WHEN status = 'partial' THEN COALESCE(paid_amount, 0)
-          ELSE 0 END), 0) AS collected_amount,
-        COALESCE(SUM(CASE 
-          WHEN status='pending' THEN total_price
-          WHEN status='partial' THEN (total_price - COALESCE(paid_amount, 0))
-          ELSE 0 END), 0) AS pending_amount
+    const byType = await pool.query(`
+      SELECT item_type,
+        COUNT(*)                                       AS count,
+        COALESCE(SUM(total_price),0)                   AS amount,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS collected
       FROM billing_items
-      WHERE ($1::text IS NULL OR facility_id::text=$1::text OR pharmacy_id::text=$1::text OR (facility_id IS NULL AND pharmacy_id IS NULL))
-        AND (
-          (DATE(created_at) BETWEEN $2 AND $3)
-          OR (paid_at IS NOT NULL AND DATE(paid_at) BETWEEN $2 AND $3)
-        )
-      GROUP BY COALESCE(item_type, 'other')
-      ORDER BY billed_amount DESC
-    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
+      WHERE facility_id=$1 AND DATE(created_at)=$2
+      GROUP BY item_type ORDER BY amount DESC
+    `, [pid, targetDate]);
 
-    // Cashier / Staff Collection Breakdown (Handover / Shift Reconciliation)
-    const byStaffRes = await pool.query(`
-      SELECT 
-        COALESCE(u.full_name, 'Cashier / Front Desk') AS collector_name,
-        COALESCE(u.role, 'receptionist') AS collector_role,
-        COUNT(bi.id) AS count,
-        COALESCE(SUM(CASE 
-          WHEN bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') 
-            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
-          WHEN bi.status = 'partial' THEN COALESCE(bi.paid_amount, 0)
-          ELSE 0 END), 0) AS total_collected,
-        COALESCE(SUM(CASE 
-          WHEN LOWER(COALESCE(bi.payment_method,''))='cash' 
-            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
-          ELSE 0 END), 0) AS cash_collected,
-        COALESCE(SUM(CASE 
-          WHEN LOWER(COALESCE(bi.payment_method,''))='mpesa' 
-            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
-          ELSE 0 END), 0) AS mpesa_collected,
-        COALESCE(SUM(CASE 
-          WHEN LOWER(COALESCE(bi.payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate') OR bi.status IN ('insurance', 'nhif', 'sha', 'corporate') 
-            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
-          ELSE 0 END), 0) AS insurance_collected,
-        COALESCE(SUM(CASE 
-          WHEN LOWER(COALESCE(bi.payment_method,''))='bank' 
-            THEN (CASE WHEN COALESCE(bi.paid_amount, 0) > 0 THEN bi.paid_amount ELSE bi.total_price END)
-          ELSE 0 END), 0) AS bank_collected
+    const recent = await pool.query(`
+      SELECT bi.*, v.visit_number, p.full_name as patient_name, p.patient_number
       FROM billing_items bi
-      LEFT JOIN users u ON bi.collected_by::text = u.id::text
-      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
-        AND (
-          (DATE(bi.created_at) BETWEEN $2 AND $3)
-          OR (bi.paid_at IS NOT NULL AND DATE(bi.paid_at) BETWEEN $2 AND $3)
-        )
-        AND (bi.status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate') OR (bi.status='partial' AND COALESCE(bi.paid_amount, 0) > 0))
-      GROUP BY u.full_name, u.role
-      ORDER BY total_collected DESC
-    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
+      LEFT JOIN visits v ON bi.visit_id=v.id
+      LEFT JOIN patients p ON bi.patient_id=p.id
+      WHERE bi.facility_id=$1 AND DATE(bi.created_at)=$2
+      ORDER BY bi.created_at DESC
+      LIMIT 50
+    `, [pid, targetDate]);
 
-    // Delayed Collections & Pending Arrears Breakdown
-    const delayedRes = await pool.query(`
-      SELECT 
-        bi.id, 
-        COALESCE(bi.item_name, bi.description, 'Service / Medication') AS item_name, 
-        bi.item_type, 
-        bi.total_price, 
-        COALESCE(bi.paid_amount, 0) AS paid_amount, 
-        bi.status, 
-        bi.created_at,
-        (bi.total_price - COALESCE(bi.paid_amount, 0)) AS balance_due,
-        p.id AS patient_id, p.full_name AS patient_name, p.patient_number, p.phone AS patient_phone,
-        v.id AS visit_id, v.visit_number, v.visit_type,
-        ROUND(EXTRACT(EPOCH FROM (NOW() - bi.created_at)) / 86400) AS days_delayed
-      FROM billing_items bi
-      LEFT JOIN patients p ON bi.patient_id::text = p.id::text
-      LEFT JOIN visits v ON bi.visit_id::text = v.id::text
-      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
-        AND DATE(bi.created_at) BETWEEN $2 AND $3
-        AND bi.status IN ('pending', 'partial')
-      ORDER BY balance_due DESC, bi.created_at ASC
-      LIMIT 100
-    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
-
-    // Detailed Itemized Ledger Feed
-    const recentRes = await pool.query(`
-      SELECT 
-        bi.*, 
-        COALESCE(bi.item_name, bi.description, 'Service / Medication') AS item_name,
-        v.visit_number, v.visit_type,
-        p.full_name AS patient_name, p.patient_number, p.phone AS patient_phone,
-        u.full_name AS collector_name
-      FROM billing_items bi
-      LEFT JOIN visits v ON bi.visit_id::text=v.id::text
-      LEFT JOIN patients p ON bi.patient_id::text=p.id::text
-      LEFT JOIN users u ON bi.collected_by::text=u.id::text
-      WHERE ($1::text IS NULL OR bi.facility_id::text=$1::text OR bi.pharmacy_id::text=$1::text OR (bi.facility_id IS NULL AND bi.pharmacy_id IS NULL))
-        AND (
-          (DATE(bi.created_at) BETWEEN $2 AND $3)
-          OR (bi.paid_at IS NOT NULL AND DATE(bi.paid_at) BETWEEN $2 AND $3)
-        )
-      ORDER BY COALESCE(bi.paid_at, bi.created_at) DESC
-      LIMIT 150
-    `, [pid, targetDateFrom, targetDateTo]).catch(() => ({ rows: [] }));
-
-    // Facility Details for Official Letterhead
-    const pharmacyRes = await pool.query(`
-      SELECT name, address, phone, email FROM pharmacies WHERE id::text=$1::text
-    `, [pid]).catch(() => ({ rows: [] }));
-
-    return successResponse(res, 200, 'Financial summary fetched', {
-      date_from: targetDateFrom,
-      date_to: targetDateTo,
-      date: targetDateFrom,
-      is_daily: targetDateFrom === targetDateTo,
-      can_filter_dates: isAdminOrHR,
-      user_role: req.user?.role,
-      facility: pharmacyRes.rows[0] || { name: 'Medicare Healthcare System' },
-      summary: summaryRes.rows[0] || {},
-      by_method: byMethodRes.rows || [],
-      by_type: byTypeRes.rows || [],
-      by_staff: byStaffRes.rows || [],
-      delayed_collections: delayedRes.rows || [],
-      recent_transactions: recentRes.rows || [],
-      generated_at: new Date().toISOString(),
-      generated_by: req.user?.full_name || req.user?.email || 'System User'
+    return successResponse(res, 200, 'Daily summary', {
+      date: targetDate,
+      summary: summary.rows[0],
+      by_method: byMethod.rows,
+      by_type: byType.rows,
+      recent_transactions: recent.rows,
     });
-  } catch (e) { 
-    logger.error('Financial summary error:', e.message); 
-    return errorResponse(res, 500, e.message); 
-  }
+  } catch (e) { logger.error('Daily summary error:', e.message); return errorResponse(res, 500, e.message); }
 };
 
 
 // ── Pay single billing item ────────────────────────────────
 const payBillingItem = async (req, res) => {
   try {
-    await ensureBillingSchema();
     const { payment_method } = req.body;
-    const pMethod = (payment_method || 'cash').toLowerCase();
-    const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
-    const statusToSet = isInsurance ? pMethod : 'paid';
-
-    let collectorId = null;
-    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
-      const s = String(req.user.id).trim();
-      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') collectorId = s;
-    }
-
+    const statusToSet = ['insurance', 'nhif', 'sha', 'corporate'].includes(payment_method) ? payment_method : 'paid';
     const result = await pool.query(`
       UPDATE billing_items
-      SET status=$1, payment_method=$2, paid_amount=total_price, paid_at=NOW(), updated_at=NOW(),
-          collected_by=COALESCE(collected_by, $5)
-      WHERE id::text=$3::text AND ($4::text IS NULL OR facility_id::text=$4::text OR pharmacy_id::text=$4::text) AND status IN ('pending', 'partial')
+      SET status=$1, payment_method=$2, paid_at=NOW(), updated_at=NOW()
+      WHERE id=$3 AND facility_id=$4 AND status='pending'
       RETURNING *
-    `, [statusToSet, pMethod, String(req.params.id), req.pharmacy_id, collectorId]);
+    `, [statusToSet, payment_method||'cash', req.params.id, req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Billing item not found or already paid');
     
-    // Check if any items are still pending for this visit and sync visit.fee_paid
-    const checkPending = await pool.query(`
-      SELECT COUNT(*) AS pending_count FROM billing_items
-      WHERE visit_id::text = $1::text AND status IN ('pending', 'partial')
-    `, [String(result.rows[0].visit_id)]);
-    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0, 10);
-    const feePaid = pendingCount === 0;
-
-    await pool.query(`
-      UPDATE visits
-      SET fee_paid = $1, payment_method = COALESCE(payment_method, $2), updated_at = NOW()
-      WHERE id::text = $3::text
-    `, [feePaid, pMethod, String(result.rows[0].visit_id)]);
-
-    try {
+    // Also update visits.fee_paid to true if this is a consultation or mch service fee item
+    if (result.rows[0].item_type === 'consultation' || result.rows[0].item_type === 'mch') {
       await pool.query(`
-        INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
-        VALUES ($1,$2,'payment_received','billing_items',$3,$4)
-      `, [req.pharmacy_id, collectorId, String(result.rows[0].id), JSON.stringify({ payment_method: pMethod, amount: result.rows[0].total_price })]);
-    } catch (auditErr) {
-      logger.warn('Audit log write warning in payBillingItem: ' + auditErr.message);
+        UPDATE visits
+        SET fee_paid = true, payment_method = $1, updated_at = NOW()
+        WHERE id = $2 AND pharmacy_id = $3
+      `, [payment_method || 'cash', result.rows[0].visit_id, req.pharmacy_id]);
     }
 
-    const io = req.app?.get ? req.app.get('io') : null;
+    await pool.query(`
+      INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
+      VALUES ($1,$2,'payment_received','billing_items',$3,$4)
+    `, [req.pharmacy_id, req.user.id, result.rows[0].id, JSON.stringify({ payment_method, amount: result.rows[0].total_price })]);
+    const io = req.app.get('io');
     if (io) io.emit(`billing_paid_${req.pharmacy_id}`, result.rows[0]);
     return successResponse(res, 200, 'Payment recorded', result.rows[0]);
   } catch (e) { return errorResponse(res, 500, e.message); }
@@ -434,7 +190,6 @@ const payBillingItem = async (req, res) => {
 
 // ── Pay entire visit or partial deposit ──────────────────
 const payVisitBill = async (req, res) => {
-  await ensureBillingSchema();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -442,56 +197,56 @@ const payVisitBill = async (req, res) => {
       payment_method, visit_id, item_ids, amount, reference_number, notes,
       insurance_provider, member_number, auth_code, copay_amount 
     } = req.body;
-    const vid = String(visit_id || req.params.visit_id);
-    const pMethod = (payment_method || 'cash').toLowerCase();
-    const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
-    const statusToSet = isInsuranceMethod ? pMethod : 'paid';
+    const vid = visit_id || req.params.visit_id;
+    const pMethod = payment_method || 'cash';
+    const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod) || !!insurance_provider;
+    const statusToSet = isInsuranceMethod ? (pMethod === 'cash' ? 'insurance' : pMethod) : 'paid';
 
-    let collectorId = null;
-    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
-      const s = String(req.user.id).trim();
-      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') collectorId = s;
-    }
+    // Ensure paid_amount, reference_number, insurance_provider, member_number, auth_code, copay_amount exist
+    try {
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0`);
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS reference_number VARCHAR(150)`);
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150)`);
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS member_number VARCHAR(150)`);
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150)`);
+      await client.query(`ALTER TABLE billing_items ADD COLUMN IF NOT EXISTS copay_amount NUMERIC DEFAULT 0`);
 
-    let depositToAllocate = (amount !== undefined && amount !== null && String(amount).trim() !== '') 
-      ? parseFloat(String(amount).replace(/,/g, '')) 
-      : null;
-    if (depositToAllocate !== null && isNaN(depositToAllocate)) depositToAllocate = null;
+      await client.query(`ALTER TABLE visits ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR(150)`);
+      await client.query(`ALTER TABLE visits ADD COLUMN IF NOT EXISTS member_number VARCHAR(150)`);
+      await client.query(`ALTER TABLE visits ADD COLUMN IF NOT EXISTS auth_code VARCHAR(150)`);
+      await client.query(`ALTER TABLE visits ADD COLUMN IF NOT EXISTS copay_amount NUMERIC DEFAULT 0`);
+    } catch(e) {}
 
-    let copayVal = (copay_amount !== undefined && copay_amount !== null && String(copay_amount).trim() !== '') 
-      ? parseFloat(String(copay_amount).replace(/,/g, '')) 
-      : 0;
-    if (isNaN(copayVal)) copayVal = 0;
-
-    const insProviderStr = isInsuranceMethod ? (insurance_provider || pMethod.toUpperCase()) : null;
+    let depositToAllocate = (amount !== undefined && amount !== null && amount !== '') ? parseFloat(amount) : null;
+    const copayVal = (copay_amount !== undefined && copay_amount !== null && copay_amount !== '') ? parseFloat(copay_amount) : 0;
+    const insProviderStr = insurance_provider || (isInsuranceMethod ? pMethod.toUpperCase() : null);
 
     let itemsToPay = [];
     if (item_ids && Array.isArray(item_ids) && item_ids.length > 0) {
-      const stringItemIds = item_ids.map(id => String(id));
-      const placeholders = stringItemIds.map((_, idx) => `$${idx + 2}`).join(', ');
+      const placeholders = item_ids.map((_, i) => `$${i + 2}`).join(',');
       const resItems = await client.query(`
         SELECT * FROM billing_items
-        WHERE visit_id::text=$1::text AND id::text IN (${placeholders}) AND status IN ('pending', 'partial')
+        WHERE visit_id=$1 AND id IN (${placeholders}) AND status IN ('pending', 'partial')
         ORDER BY created_at ASC
-      `, [vid, ...stringItemIds]);
+      `, [vid, ...item_ids]);
       itemsToPay = resItems.rows;
     } else {
       const resItems = await client.query(`
         SELECT * FROM billing_items
-        WHERE visit_id::text=$1::text AND status IN ('pending', 'partial')
+        WHERE visit_id=$1 AND status IN ('pending', 'partial')
         ORDER BY created_at ASC
       `, [vid]);
       itemsToPay = resItems.rows;
 
       if (itemsToPay.length === 0) {
-        const vRow = await client.query(`SELECT * FROM visits WHERE id::text=$1::text`, [vid]);
+        const vRow = await client.query(`SELECT * FROM visits WHERE id=$1`, [vid]);
         if (vRow.rows[0] && parseFloat(vRow.rows[0].consultation_fee || 0) > 0) {
           const cFee = parseFloat(vRow.rows[0].consultation_fee);
           const insRes = await client.query(`
-            INSERT INTO billing_items (facility_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, total_price, status, collected_by)
-            VALUES ($1, $2, $3, 'Consultation Fee', 'consultation', $4, 1, $4, 'pending', $5)
+            INSERT INTO billing_items (facility_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, total_price, status)
+            VALUES ($1, $2, $3, 'Consultation Fee', 'consultation', $4, 1, $4, 'pending')
             RETURNING *
-          `, [req.pharmacy_id, vid, vRow.rows[0].patient_id, cFee, collectorId]);
+          `, [req.pharmacy_id, vid, vRow.rows[0].patient_id, cFee]);
           itemsToPay = insRes.rows;
         }
       }
@@ -502,8 +257,8 @@ const payVisitBill = async (req, res) => {
       let rem = depositToAllocate;
       for (const item of itemsToPay) {
         if (rem <= 0) break;
-        const tot = !isNaN(parseFloat(item.total_price)) ? parseFloat(item.total_price) : 0;
-        const alreadyPaid = !isNaN(parseFloat(item.paid_amount)) ? parseFloat(item.paid_amount) : 0;
+        const tot = parseFloat(item.total_price || 0);
+        const alreadyPaid = parseFloat(item.paid_amount || 0);
         const itemPending = Math.max(0, tot - alreadyPaid);
 
         if (rem >= itemPending) {
@@ -512,10 +267,10 @@ const payVisitBill = async (req, res) => {
             UPDATE billing_items
             SET status=$1, payment_method=$2, paid_amount=$3, reference_number=$4,
                 insurance_provider=$5, member_number=$6, auth_code=$7, copay_amount=$8,
-                paid_at=NOW(), updated_at=NOW(), collected_by=COALESCE(collected_by, $10)
-            WHERE id::text=$9::text RETURNING *
-          `, [statusToSet, pMethod, tot, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, String(item.id), collectorId]);
-          if (uRes.rows[0]) updatedRows.push(uRes.rows[0]);
+                paid_at=NOW(), updated_at=NOW()
+            WHERE id=$9 RETURNING *
+          `, [statusToSet, pMethod, tot, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, item.id]);
+          updatedRows.push(uRes.rows[0]);
         } else {
           // Partial payment for this item
           const newPaid = alreadyPaid + rem;
@@ -524,63 +279,48 @@ const payVisitBill = async (req, res) => {
             UPDATE billing_items
             SET status='partial', payment_method=$1, paid_amount=$2, reference_number=$3,
                 insurance_provider=$4, member_number=$5, auth_code=$6, copay_amount=$7,
-                updated_at=NOW(), collected_by=COALESCE(collected_by, $9)
-            WHERE id::text=$8::text RETURNING *
-          `, [pMethod, newPaid, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, String(item.id), collectorId]);
-          if (uRes.rows[0]) updatedRows.push(uRes.rows[0]);
+                updated_at=NOW()
+            WHERE id=$8 RETURNING *
+          `, [pMethod, newPaid, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, item.id]);
+          updatedRows.push(uRes.rows[0]);
         }
       }
     } else {
       // Pay all selected/pending items in full
       for (const item of itemsToPay) {
-        const tot = !isNaN(parseFloat(item.total_price)) ? parseFloat(item.total_price) : 0;
+        const tot = parseFloat(item.total_price || 0);
         const uRes = await client.query(`
           UPDATE billing_items
           SET status=$1, payment_method=$2, paid_amount=$3, reference_number=$4,
               insurance_provider=$5, member_number=$6, auth_code=$7, copay_amount=$8,
-              paid_at=NOW(), updated_at=NOW(), collected_by=COALESCE(collected_by, $10)
-          WHERE id::text=$9::text RETURNING *
-        `, [statusToSet, pMethod, tot, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, String(item.id), collectorId]);
-        if (uRes.rows[0]) updatedRows.push(uRes.rows[0]);
+              paid_at=NOW(), updated_at=NOW()
+          WHERE id=$9 RETURNING *
+        `, [statusToSet, pMethod, tot, reference_number || null, insProviderStr, member_number || null, auth_code || null, copayVal, item.id]);
+        updatedRows.push(uRes.rows[0]);
       }
     }
-
-    // Check if any items are still pending for this visit
-    const checkPending = await client.query(`
-      SELECT COUNT(*) AS pending_count FROM billing_items
-      WHERE visit_id::text = $1::text AND status IN ('pending', 'partial')
-    `, [vid]);
-    const pendingCount = parseInt(checkPending.rows[0]?.pending_count || 0, 10);
-    const feePaid = pendingCount === 0;
 
     // Update visit status & payment details
     await client.query(`
       UPDATE visits
-      SET fee_paid = $1, payment_method = $2, insurance_provider = COALESCE($3, insurance_provider),
-          member_number = COALESCE($4, member_number), auth_code = COALESCE($5, auth_code),
-          copay_amount = $6, updated_at = NOW()
-      WHERE id::text = $7::text
-    `, [feePaid, pMethod, insProviderStr, member_number || null, auth_code || null, copayVal, vid]);
+      SET fee_paid = true, payment_method = $1, insurance_provider = COALESCE($2, insurance_provider),
+          member_number = COALESCE($3, member_number), auth_code = COALESCE($4, auth_code),
+          copay_amount = $5, updated_at = NOW()
+      WHERE id = $6
+    `, [pMethod, insProviderStr, member_number || null, auth_code || null, copayVal, vid]);
+
+    await client.query(`
+      INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
+      VALUES ($1,$2,'visit_payment_received','visit',$3,$4)
+    `, [req.pharmacy_id, req.user.id, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
 
     await client.query('COMMIT');
-
-    // Post-commit audit and realtime broadcast (non-blocking, won't abort payment)
-    try {
-      await pool.query(`
-        INSERT INTO audit_logs (facility_id, pharmacy_id, user_id, action, table_name, record_id, new_values)
-        VALUES ($1,$1,$2,'visit_payment_received','visit',$3,$4)
-      `, [req.pharmacy_id, collectorId, vid, JSON.stringify({ payment_method: pMethod, amount_allocated: depositToAllocate, insurance_provider: insProviderStr, items_affected: updatedRows.length, reference_number, notes })]);
-    } catch (auditErr) {
-      logger.warn('Audit log write warning in payVisitBill: ' + auditErr.message);
-    }
-
-    const io = req.app?.get ? req.app.get('io') : null;
+    const io = req.app.get('io');
     if (io) io.emit(`billing_paid_${req.pharmacy_id}`, { visit_id: vid, items: updatedRows });
 
     return successResponse(res, 200, `Payment recorded for ${updatedRows.length} items`, updatedRows);
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
-    logger.error('Error in payVisitBill:', e.message);
+    await client.query('ROLLBACK');
     return errorResponse(res, 500, e.message);
   } finally {
     client.release();
@@ -590,20 +330,13 @@ const payVisitBill = async (req, res) => {
 // ── Waive a billing item ──────────────────────────────────
 const waiveBillingItem = async (req, res) => {
   try {
-    await ensureBillingSchema();
     const { waive_reason } = req.body;
-    let waiverId = null;
-    if (req.user?.id !== undefined && req.user?.id !== null && req.user?.id !== '') {
-      const s = String(req.user.id).trim();
-      if (s !== 'NaN' && s !== 'undefined' && s !== 'null') waiverId = s;
-    }
-
     const result = await pool.query(`
       UPDATE billing_items
       SET status='waived', waived_by=$1, waive_reason=$2, updated_at=NOW()
-      WHERE id::text=$3::text AND ($4::text IS NULL OR facility_id::text=$4::text OR pharmacy_id::text=$4::text)
+      WHERE id=$3 AND facility_id=$4
       RETURNING *
-    `, [waiverId, waive_reason||null, String(req.params.id), req.pharmacy_id]);
+    `, [req.user.id, waive_reason||null, req.params.id, req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Billing item not found');
 
     // Also update visits.fee_paid to true if this is a consultation or mch service fee item
@@ -611,17 +344,8 @@ const waiveBillingItem = async (req, res) => {
       await pool.query(`
         UPDATE visits
         SET fee_paid = true, payment_method = 'waived', updated_at = NOW()
-        WHERE id::text = $1::text AND ($2::text IS NULL OR pharmacy_id::text = $2::text)
-      `, [String(result.rows[0].visit_id), req.pharmacy_id]);
-    }
-
-    try {
-      await pool.query(`
-        INSERT INTO audit_logs (facility_id, user_id, action, table_name, record_id, new_values)
-        VALUES ($1,$2,'waived','billing_items',$3,$4)
-      `, [req.pharmacy_id, waiverId, String(result.rows[0].id), JSON.stringify({ reason: waive_reason })]);
-    } catch (auditErr) {
-      logger.warn('Audit log write warning in waiveBillingItem: ' + auditErr.message);
+        WHERE id = $1 AND pharmacy_id = $2
+      `, [result.rows[0].visit_id, req.pharmacy_id]);
     }
 
     return successResponse(res, 200, 'Item waived', result.rows[0]);
@@ -644,8 +368,8 @@ const markInsurance = async (req, res) => {
     const result = await pool.query(`
       UPDATE billing_items
       SET status=$1, payment_method=$1, insurance_provider=$2, member_number=$3, auth_code=$4, updated_at=NOW()
-      WHERE id::text=$5::text AND ($6::text IS NULL OR facility_id::text=$6::text OR pharmacy_id::text=$6::text) RETURNING *
-    `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, String(req.params.id), req.pharmacy_id]);
+      WHERE id=$5 AND facility_id=$6 RETURNING *
+    `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, req.params.id, req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Billing item not found');
 
     // Also update visits
@@ -654,8 +378,8 @@ const markInsurance = async (req, res) => {
         UPDATE visits
         SET fee_paid = true, payment_method = $1, insurance_provider = COALESCE($2, insurance_provider),
             member_number = COALESCE($3, member_number), auth_code = COALESCE($4, auth_code), updated_at = NOW()
-        WHERE id::text = $5::text AND ($6::text IS NULL OR pharmacy_id::text = $6::text)
-      `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, String(result.rows[0].visit_id), req.pharmacy_id]);
+        WHERE id = $5 AND pharmacy_id = $6
+      `, [coverage_type, insurance_provider || coverage_type.toUpperCase(), member_number || null, auth_code || null, result.rows[0].visit_id, req.pharmacy_id]);
     }
 
     return successResponse(res, 200, `Marked as ${coverage_type}`, result.rows[0]);
@@ -670,9 +394,9 @@ const getVisitBilling = async (req, res) => {
         SELECT v.status, v.visit_type,
                (EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
                 OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
-                OR EXISTS(SELECT 1 FROM beds b WHERE b.current_visit_id::text = v.id::text)) AS is_inpatient
+                OR EXISTS(SELECT 1 FROM beds b WHERE b.current_visit_id = v.id)) AS is_inpatient
         FROM visits v
-        WHERE v.id::text = $1::text AND (v.pharmacy_id = $2 OR v.pharmacy_id IS NULL)
+        WHERE v.id = $1 AND (v.pharmacy_id = $2 OR v.pharmacy_id IS NULL)
       `, [req.params.visit_id, req.pharmacy_id]);
 
       if (vCheck.rows[0]?.is_inpatient) {
@@ -688,57 +412,43 @@ const getVisitBilling = async (req, res) => {
     let items = await pool.query(`
       SELECT bi.*, so.order_type
       FROM billing_items bi
-      LEFT JOIN service_orders so ON bi.service_order_id::text=so.id::text
-      WHERE bi.visit_id::text=$1::text AND ($2::text IS NULL OR bi.facility_id::text=$2::text OR bi.pharmacy_id::text=$2::text)
+      LEFT JOIN service_orders so ON bi.service_order_id=so.id
+      WHERE bi.visit_id=$1 AND bi.facility_id=$2
       ORDER BY bi.created_at DESC
     `, [req.params.visit_id, req.pharmacy_id]);
 
     if (items.rows.length === 0) {
-      const vRes = await pool.query(`SELECT * FROM visits WHERE id::text=$1::text AND ($2::text IS NULL OR pharmacy_id::text=$2::text)`, [req.params.visit_id, req.pharmacy_id]);
+      const vRes = await pool.query(`SELECT * FROM visits WHERE id=$1 AND (pharmacy_id=$2 OR pharmacy_id IS NULL)`, [req.params.visit_id, req.pharmacy_id]);
       if (vRes.rows[0] && parseFloat(vRes.rows[0].consultation_fee || 0) > 0) {
         const cFee = parseFloat(vRes.rows[0].consultation_fee);
         const isPaid = !!vRes.rows[0].fee_paid;
         await pool.query(`
-          INSERT INTO billing_items (facility_id, pharmacy_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, total_price, status, paid_amount, payment_method, paid_at)
-          VALUES ($1, $1, $2, $3, 'Consultation Fee', 'consultation', $4, 1, $4, $5, $6, $7, $8)
+          INSERT INTO billing_items (facility_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, total_price, status, payment_method, paid_at)
+          VALUES ($1, $2, $3, 'Consultation Fee', 'consultation', $4, 1, $4, $5, $6, $7)
         `, [
           req.pharmacy_id,
           req.params.visit_id,
           vRes.rows[0].patient_id,
           cFee,
           isPaid ? 'paid' : 'pending',
-          isPaid ? cFee : 0,
           isPaid ? (vRes.rows[0].payment_method || 'cash') : null,
           isPaid ? new Date() : null
         ]);
         items = await pool.query(`
           SELECT bi.*, so.order_type
           FROM billing_items bi
-          LEFT JOIN service_orders so ON bi.service_order_id::text=so.id::text
-          WHERE bi.visit_id::text=$1::text AND ($2::text IS NULL OR bi.facility_id::text=$2::text OR bi.pharmacy_id::text=$2::text)
+          LEFT JOIN service_orders so ON bi.service_order_id=so.id
+          WHERE bi.visit_id=$1 AND bi.facility_id=$2
           ORDER BY bi.created_at DESC
         `, [req.params.visit_id, req.pharmacy_id]);
       }
     }
 
     const rows = items.rows;
-    const total = rows.reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
-    const paid = rows.reduce((s, i) => {
-      const st = (i.status || '').toLowerCase();
-      const pm = (i.payment_method || '').toLowerCase();
-      if (['paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared'].includes(st)) {
-        return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
-      }
-      if (['cash', 'mpesa', 'bank', 'card', 'insurance', 'sha', 'nhif', 'corporate'].includes(pm) && st !== 'pending' && st !== 'waived' && st !== 'cancelled') {
-        return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
-      }
-      if (st === 'partial') {
-        return s + parseFloat(i.paid_amount || 0);
-      }
-      return s;
-    }, 0);
-    const waived = rows.filter(i => (i.status || '').toLowerCase() === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
-    const balance = Math.max(0, total - paid - waived);
+    const total    = rows.reduce((s,i)=>s+parseFloat(i.total_price||0),0);
+    const paid     = rows.filter(i=>['paid', 'insurance', 'nhif', 'sha', 'corporate'].includes(i.status)).reduce((s,i)=>s+parseFloat(i.total_price||0),0);
+    const waived   = rows.filter(i=>i.status==='waived').reduce((s,i)=>s+parseFloat(i.total_price||0),0);
+    const balance  = total - paid - waived;
     return successResponse(res, 200, 'Visit billing', { items: rows, total, paid, waived, balance });
   } catch (e) { return errorResponse(res, 500, e.message); }
 };
@@ -766,7 +476,7 @@ const getBillingClaims = async (req, res) => {
       FROM visits v
       JOIN patients p ON v.patient_id = p.id
       JOIN billing_items bi ON bi.visit_id = v.id
-      WHERE (v.pharmacy_id::text = $1::text OR ($1::text IS NULL))
+      WHERE v.pharmacy_id = $1
         AND (bi.status IN ('insurance', 'sha', 'nhif', 'corporate') OR bi.payment_method IN ('insurance', 'sha', 'nhif', 'corporate') OR v.payment_method IN ('insurance', 'sha', 'nhif', 'corporate'))
       GROUP BY v.id, p.id
       ORDER BY v.created_at DESC
@@ -805,7 +515,7 @@ const getVisitInvoice = async (req, res) => {
       SELECT v.*, p.full_name AS patient_name, p.patient_number, p.phone, p.gender, p.date_of_birth, p.national_id, p.sha_number, p.insurance_provider AS patient_insurance
       FROM visits v
       JOIN patients p ON v.patient_id = p.id
-      WHERE v.id::text = $1::text AND ($2::text IS NULL OR v.pharmacy_id::text = $2::text)
+      WHERE v.id = $1 AND v.pharmacy_id = $2
     `, [vid, pid]);
 
     if (!vRes.rows[0]) return errorResponse(res, 404, 'Visit or invoice record not found');
@@ -813,38 +523,14 @@ const getVisitInvoice = async (req, res) => {
 
     const iRes = await pool.query(`
       SELECT * FROM billing_items
-      WHERE visit_id::text = $1::text AND ($2::text IS NULL OR facility_id::text = $2::text OR pharmacy_id::text = $2::text)
+      WHERE visit_id = $1 AND facility_id = $2
       ORDER BY created_at ASC
     `, [vid, pid]);
 
     const items = iRes.rows;
-    if (items.length === 0 && parseFloat(visit.consultation_fee || 0) > 0) {
-      const isPaid = !!visit.fee_paid;
-      const cFee = parseFloat(visit.consultation_fee);
-      const insRes = await pool.query(`
-        INSERT INTO billing_items (facility_id, pharmacy_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, total_price, status, paid_amount, payment_method, paid_at)
-        VALUES ($1, $1, $2, $3, 'Consultation Fee', 'consultation', $4, 1, $4, $5, $6, $7, $8)
-        RETURNING *
-      `, [pid, vid, visit.patient_id, cFee, isPaid ? 'paid' : 'pending', isPaid ? cFee : 0, isPaid ? (visit.payment_method || 'cash') : null, isPaid ? new Date() : null]);
-      items.push(insRes.rows[0]);
-    }
-
-    const total_billed = items.reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
-    const total_paid = items.reduce((s, i) => {
-      const st = (i.status || '').toLowerCase();
-      const pm = (i.payment_method || '').toLowerCase();
-      if (['paid', 'insurance', 'nhif', 'sha', 'corporate', 'settled', 'cleared'].includes(st)) {
-        return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
-      }
-      if (['cash', 'mpesa', 'bank', 'card', 'insurance', 'sha', 'nhif', 'corporate'].includes(pm) && st !== 'pending' && st !== 'waived' && st !== 'cancelled') {
-        return s + parseFloat(i.paid_amount || i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0);
-      }
-      if (st === 'partial') {
-        return s + parseFloat(i.paid_amount || 0);
-      }
-      return s;
-    }, 0);
-    const total_waived = items.filter(i => (i.status || '').toLowerCase() === 'waived').reduce((s, i) => s + parseFloat(i.total_price || (parseFloat(i.unit_price || 0) * (parseInt(i.quantity) || 1)) || 0), 0);
+    const total_billed = items.reduce((s, i) => s + parseFloat(i.total_price || 0), 0);
+    const total_paid = items.filter(i => ['paid', 'insurance', 'nhif', 'sha', 'corporate'].includes(i.status)).reduce((s, i) => s + parseFloat(i.total_price || 0), 0);
+    const total_waived = items.filter(i => i.status === 'waived').reduce((s, i) => s + parseFloat(i.total_price || 0), 0);
     const balance = Math.max(0, total_billed - total_paid - total_waived);
 
     return successResponse(res, 200, 'Visit invoice fetched', {

@@ -3,7 +3,6 @@ import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { TrendingUp, Package, RefreshCw, Loader, AlertTriangle, Printer, Search, FileText } from 'lucide-react';
-import FinancialSummaryReport from '../components/FinancialSummaryReport';
 
 const Card = ({ children, style = {} }) => (
   <div style={{ background: 'var(--bg-surface)', borderRadius: 14, border: '1px solid var(--border)', ...style }}>{children}</div>
@@ -88,18 +87,6 @@ export default function ReportsPage() {
   const handlePrintMOH204 = () => {
     const win = window.open('', '_blank');
     const selectedMonthName = MONTHS[mohMonth - 1];
-
-    const rawDoctorName = user?.full_name || user?.name || user?.email?.split('@')[0] || 'Medical Officer';
-    const isDoctorRole = user?.role === 'doctor' || user?.role === 'clinician';
-    const preparedDoctorName = (isDoctorRole && !rawDoctorName.toLowerCase().startsWith('dr'))
-      ? `Dr. ${rawDoctorName}`
-      : rawDoctorName;
-    const preparedDoctorRole = user?.role
-      ? (user.role.charAt(0).toUpperCase() + user.role.slice(1).replace('_', ' '))
-      : 'Medical Officer / Clinician';
-
-    const facilityName = user?.pharmacy?.name || 'HEKIMA MEDICAL CENTRE';
-    const facilityAddress = user?.pharmacy?.address || 'P.O. Box 1234, Nairobi';
     
     // Categorize and summarize visits
     let u5M = 0, u5F = 0, o5M = 0, o5F = 0;
@@ -154,71 +141,59 @@ export default function ReportsPage() {
         <head>
           <title>MOH 204 Outpatient Summary Report</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 30px; font-size: 11px; color: #0f172a; line-height: 1.4; background: #fff; }
-            .header { text-align: center; border-bottom: 3px double #1e3a8a; padding-bottom: 12px; margin-bottom: 16px; }
-            .republic { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #0f172a; }
-            .title { font-size: 16px; font-weight: 800; color: #1e3a8a; margin: 4px 0; text-transform: uppercase; }
-            .meta { font-size: 11px; font-weight: 600; color: #475569; }
-            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; border: 1.5px solid #64748b; }
-            .info-table td { padding: 7px 10px; font-size: 11.5px; border: 1px solid #94a3b8; }
-            .info-label { font-weight: 700; color: #334155; background: #f1f5f9; width: 18%; }
-            table.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #334155; font-size: 11.5px; }
-            table.data-table th, table.data-table td { border: 1px solid #94a3b8; padding: 7px 9px; }
-            table.data-table th { background-color: #e2e8f0; font-weight: 800; text-align: center; font-size: 11px; color: #0f172a; border: 1px solid #64748b; }
-            table.data-table .subth { font-size: 10px; background-color: #f1f5f9; font-weight: 700; }
-            .number { text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; }
-            .total-row td { background-color: #e2e8f0; font-weight: 800; border: 1.5px solid #334155 !important; }
-            .signature-block { margin-top: 35px; display: flex; justify-content: space-between; font-size: 11px; page-break-inside: avoid; border-top: 1.5px solid #cbd5e1; padding-top: 14px; }
+            body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin: 30px; font-size: 11px; color: #333; }
+            .header { text-align: center; border-bottom: 3px double #1a4a8a; padding-bottom: 12px; margin-bottom: 15px; }
+            .republic { font-size: 14px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; }
+            .title { font-size: 16px; font-weight: 800; color: #1a4a8a; margin: 4px 0; text-transform: uppercase; }
+            .meta { font-size: 11px; font-weight: bold; color: #555; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th, td { border: 1px solid #999; padding: 6px 8px; text-align: left; }
+            th { background-color: #f2f6fa; font-weight: bold; text-align: center; font-size: 10px; }
+            .subth { font-size: 9px; background-color: #fcfdfe; }
+            .number { text-align: center; font-family: monospace; font-weight: bold; font-size: 12px; }
+            .total-row { background-color: #eef2f7; font-weight: bold; }
+            .signature-block { margin-top: 40px; display: flex; justify-content: space-between; font-size: 11px; }
+            .sign-line { border-top: 1px solid #000; width: 220px; text-align: center; padding-top: 4px; margin-top: 25px; }
             @media print {
-              body { margin: 10mm; font-size: 11px; }
-              @page { size: A4 portrait; margin: 10mm; }
+              body { margin: 15px; }
               button { display: none; }
-              table thead { display: table-header-group; }
-              table tr { page-break-inside: avoid; }
             }
           </style>
         </head>
         <body>
           <div class="header">
-            <div class="republic">REPUBLIC OF KENYA — MINISTRY OF HEALTH</div>
+            <div class="republic">REPUBLIC OF KENYA - MINISTRY OF HEALTH</div>
             <div class="title">MOH 204 OUTPATIENT SERVICES AGGREGATE SUMMARY</div>
             <div class="meta">
-              FACILITY: <strong>${facilityName.toUpperCase()}</strong> | LOCATION: ${facilityAddress}
+              FACILITY: HEKIMA MEDICAL CENTRE | CODE: 12345 | PROVINCE/COUNTY: NAIROBI
             </div>
-            <div style="font-size: 12px; font-weight: 800; margin-top: 5px; color: #1e3a8a;">
+            <div style="font-size: 12px; font-weight: bold; margin-top: 5px; color: #1a4a8a;">
               REPORT PERIOD: ${selectedMonthName.toUpperCase()} ${mohYear}
             </div>
           </div>
 
-          <table class="info-table">
-            <tr>
-              <td class="info-label">Reporting Period</td>
-              <td><strong>${selectedMonthName} ${mohYear}</strong></td>
-              <td class="info-label">Prepared By</td>
-              <td><strong>${preparedDoctorName}</strong> <span style="color:#64748b; font-size:11px;">(${preparedDoctorRole})</span></td>
-            </tr>
-            <tr>
-              <td class="info-label">Total Attendance</td>
-              <td><strong>${u5M + u5F + o5M + o5F}</strong> OPD visits</td>
-              <td class="info-label">Demographics</td>
-              <td><strong>Under 5:</strong> ${u5M + u5F} (${u5M}M / ${u5F}F) &nbsp;|&nbsp; <strong>Over 5:</strong> ${o5M + o5F} (${o5M}M / ${o5F}F)</td>
-            </tr>
-          </table>
+          <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px;">SUMMARY OVERVIEW:</div>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; background: #f9fbfd; padding: 12px; border: 1px solid #ddd; border-radius: 8px; text-align: center;">
+            <div><strong style="color: #666;">Under 5 (M)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${u5M}</span></div>
+            <div><strong style="color: #666;">Under 5 (F)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${u5F}</span></div>
+            <div><strong style="color: #666;">Over 5 (M)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${o5M}</span></div>
+            <div><strong style="color: #666;">Over 5 (F)</strong><br/><span style="font-size:16px; font-weight:bold; color:#1a4a8a;">${o5F}</span></div>
+          </div>
 
-          <table class="data-table">
+          <table>
             <thead>
               <tr>
-                <th rowspan="2" style="width: 36px;">#</th>
-                <th rowspan="2" style="text-align: left;">DISEASE CATEGORY (MOH 204 CLASSIFICATIONS)</th>
+                <th rowspan="2" style="width: 4%;">#</th>
+                <th rowspan="2" style="text-align: left; width: 46%;">DISEASE CATEGORY (MOH 204 CLASSIFICATIONS)</th>
                 <th colspan="2">UNDER 5 YEARS</th>
                 <th colspan="2">OVER 5 YEARS</th>
-                <th rowspan="2" style="width: 100px;">GRAND TOTAL</th>
+                <th rowspan="2" style="width: 14%;">GRAND TOTAL</th>
               </tr>
               <tr>
-                <th class="subth" style="width: 75px; color: #1e40af;">MALE</th>
-                <th class="subth" style="width: 75px; color: #be185d;">FEMALE</th>
-                <th class="subth" style="width: 75px; color: #1e40af;">MALE</th>
-                <th class="subth" style="width: 75px; color: #be185d;">FEMALE</th>
+                <th class="subth" style="width: 9%;">MALE</th>
+                <th class="subth" style="width: 9%;">FEMALE</th>
+                <th class="subth" style="width: 9%;">MALE</th>
+                <th class="subth" style="width: 9%;">FEMALE</th>
               </tr>
             </thead>
             <tbody>
@@ -226,46 +201,36 @@ export default function ReportsPage() {
                 const item = diseaseSummary[k];
                 const rTotal = item.u5m + item.u5f + item.o5m + item.o5f;
                 return `
-                  <tr style="background: ${i % 2 === 1 ? '#f8fafc' : '#ffffff'};">
-                    <td class="number" style="color: #475569; width: 36px;">${i + 1}</td>
-                    <td style="font-weight: 600; text-align: left;">${item.label}</td>
-                    <td class="number" style="color: ${item.u5m > 0 ? '#1e40af' : '#94a3b8'};">${item.u5m}</td>
-                    <td class="number" style="color: ${item.u5f > 0 ? '#be185d' : '#94a3b8'};">${item.u5f}</td>
-                    <td class="number" style="color: ${item.o5m > 0 ? '#1e40af' : '#94a3b8'};">${item.o5m}</td>
-                    <td class="number" style="color: ${item.o5f > 0 ? '#be185d' : '#94a3b8'};">${item.o5f}</td>
-                    <td class="number" style="background-color: #f1f5f9; color: #0f172a; font-weight: 800;">${rTotal}</td>
+                  <tr>
+                    <td class="number">${i + 1}</td>
+                    <td style="font-weight: 600;">${item.label}</td>
+                    <td class="number" style="color: ${item.u5m > 0 ? '#111' : '#ccc'};">${item.u5m}</td>
+                    <td class="number" style="color: ${item.u5f > 0 ? '#111' : '#ccc'};">${item.u5f}</td>
+                    <td class="number" style="color: ${item.o5m > 0 ? '#111' : '#ccc'};">${item.o5m}</td>
+                    <td class="number" style="color: ${item.o5f > 0 ? '#111' : '#ccc'};">${item.o5f}</td>
+                    <td class="number" style="background-color: #fafbfc; color: #1a4a8a;">${rTotal}</td>
                   </tr>
                 `;
               }).join('')}
-            </tbody>
-            <tfoot>
               <tr class="total-row">
-                <td colspan="2" style="text-align: right; padding-right: 12px; font-weight: 800; text-transform: uppercase;">GRAND AGGREGATE TOTALS</td>
-                <td class="number" style="color: #1e40af; font-size: 12.5px;">${u5M}</td>
-                <td class="number" style="color: #be185d; font-size: 12.5px;">${u5F}</td>
-                <td class="number" style="color: #1e40af; font-size: 12.5px;">${o5M}</td>
-                <td class="number" style="color: #be185d; font-size: 12.5px;">${o5F}</td>
-                <td class="number" style="color: #0f172a; font-size: 13.5px; background: #cbd5e1;">${u5M + u5F + o5M + o5F}</td>
+                <td colspan="2">GRAND AGGREGATE TOTALS</td>
+                <td class="number">${u5M}</td>
+                <td class="number">${u5F}</td>
+                <td class="number">${o5M}</td>
+                <td class="number">${o5F}</td>
+                <td class="number" style="color: #1a4a8a; font-size: 13px;">${mohVisits.length}</td>
               </tr>
-            </tfoot>
+            </tbody>
           </table>
 
           <div class="signature-block">
-            <div style="text-align: left; width: 260px;">
-              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Prepared By (Logged-in Clinician):</div>
-              <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">${preparedDoctorName}</div>
-              <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">${preparedDoctorRole}</div>
-              <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
-                Doctor / Clinician's Signature & Date
-              </div>
+            <div>
+              <div>Compiled By:</div>
+              <div class="sign-line">Record Officer Signature & Stamp</div>
             </div>
-            <div style="text-align: left; width: 260px;">
-              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;">Verified & Approved By:</div>
-              <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">Medical Superintendent</div>
-              <div style="font-size: 11px; color: #475569; font-weight: 600; margin-bottom: 24px;">Health Records & In-Charge</div>
-              <div style="border-top: 1.5px solid #334155; width: 100%; padding-top: 4px; font-size: 10px; color: #64748b;">
-                Official Stamp & Date
-              </div>
+            <div>
+              <div>Approved By:</div>
+              <div class="sign-line">Medical Superintendent / Director</div>
             </div>
           </div>
         </body>
@@ -606,7 +571,7 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        <Tab label="💰 Financial & Shift Summary" active={tab==='daily'} onClick={() => setTab('daily')} />
+        <Tab label="📋 Daily Summary" active={tab==='daily'} onClick={() => setTab('daily')} />
         <Tab label="🧬 Patient History" active={tab==='history'} onClick={() => setTab('history')} />
         {!isLab && <Tab label="📊 Sales Report" active={tab==='sales'} onClick={() => setTab('sales')} />}
         {!isLab && <Tab label="📅 Monthly Trend" active={tab==='monthly'} onClick={() => setTab('monthly')} />}
@@ -614,6 +579,16 @@ export default function ReportsPage() {
         <Tab label="🏛 MOH National Reports" active={tab==='moh'} onClick={() => setTab('moh')} />
         {isLab && <Tab label="🔬 MOH Reports" active={tab==='lab'} onClick={() => setTab('lab')} />}
       </div>
+
+      {/* Date filter for daily */}
+      {tab === 'daily' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 4 }}>DATE</label>
+            <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)} style={{ padding: '9px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
+          </div>
+        </div>
+      )}
 
       {/* Date filters for sales */}
       {tab === 'sales' && (
@@ -633,9 +608,88 @@ export default function ReportsPage() {
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Loader size={28} color="var(--accent)" style={{ animation: 'spin 0.8s linear infinite' }} /></div>
       ) : (
         <>
-          {/* ── FINANCIAL & SHIFT SUMMARY ── */}
-          {tab === 'daily' && (
-            <FinancialSummaryReport initialDateFrom={dailyDate} initialDateTo={dailyDate} />
+          {/* ── DAILY SUMMARY ── */}
+          {tab === 'daily' && dailyData && (
+            <div ref={printRef}>
+              {/* Print Header */}
+              <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '2px solid var(--border)' }}>
+                <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>{dailyData.pharmacy?.name || 'Medicare HMS'}</h2>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{dailyData.pharmacy?.address} {dailyData.pharmacy?.phone ? `• ${dailyData.pharmacy.phone}` : ''}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginTop: 6 }}>Daily Summary Report — {fmtDate(dailyData.date)}</div>
+              </div>
+
+              {/* Summary Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}>
+                {[
+                  { label: 'Total Patients', value: dailyData.visits?.length || 0, color: 'var(--accent)' },
+                  { label: 'Total Sales', value: fmt(dailyData.sales_summary?.total_sales), color: 'var(--info)' },
+                  { label: 'Lab Tests', value: `${dailyData.lab_summary?.completed || 0}/${dailyData.lab_summary?.total || 0}`, color: 'var(--warning)' },
+                  { label: 'M-Pesa', value: fmt(dailyData.sales_summary?.mpesa), color: 'var(--success)' },
+                ].map(({ label, value, color }) => (
+                  <Card key={label} style={{ padding: 18 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 4 }}>{value}</div>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Patients Table */}
+              <Card style={{ padding: 20, marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>👥 Patients Attended</div>
+                {(dailyData.visits || []).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-faint)', fontSize: 13 }}>No visits for this date</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                        {['#','Patient','No.','Gender','Age','Visit Type','Status','Time'].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyData.visits.map((v, i) => (
+                        <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-faint)' }}>{i+1}</td>
+                          <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{v.patient_name}</td>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.patient_number}</td>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.gender}</td>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{age(v.date_of_birth)}</td>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.visit_type?.toUpperCase()}</td>
+                          <td style={{ padding: '9px 10px' }}>
+                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: v.status==='discharged'||v.status==='Completed' ? 'var(--accent-soft)' : 'var(--bg-elevated)', color: v.status==='discharged'||v.status==='Completed' ? 'var(--accent)' : 'var(--text-muted)' }}>
+                              {v.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{new Date(v.visit_date).toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+
+              {/* Sales Breakdown */}
+              <Card style={{ padding: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>💰 Revenue Breakdown</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
+                  {[
+                    { label: 'Cash Sales', value: fmt(dailyData.sales_summary?.cash) },
+                    { label: 'M-Pesa Sales', value: fmt(dailyData.sales_summary?.mpesa) },
+                    { label: 'Total Transactions', value: dailyData.sales_summary?.total_transactions || 0 },
+                    { label: 'Total Revenue', value: fmt(dailyData.sales_summary?.total_sales) },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
+                  Printed: {new Date().toLocaleString('en-KE')} • {user?.full_name}
+                </div>
+              </Card>
+            </div>
           )}
 
           {/* ── PATIENT HISTORY ── */}
