@@ -16,6 +16,7 @@ const { checkExpiringSubscriptions } = require('./utils/expiryChecker');
 
 const app = express();
 app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/api/health', (req, res) => res.status(200).json({ status: 'ok', uptime: process.uptime() }));
 const server = http.createServer(app);
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -188,7 +189,7 @@ const startExpiryChecker = () => {
   logger.info('⏰ Expiry checker scheduled (every 24h)');
 };
 
-const PORT = 3000; // Strictly listen on port 3000 as per runtime reverse-proxy routing
+const PORT = process.env.APPLET_ID ? 3000 : (Number(process.env.PORT) || 3000);
 server.listen(PORT, '0.0.0.0', () => {
   logger.info('================================');
   logger.info('💊 Medicare HMS Backend v2.0');
@@ -206,6 +207,21 @@ server.listen(PORT, '0.0.0.0', () => {
     .catch((err) => {
       logger.error('Database connection/initialization failed:', err.message);
     });
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM signal (Polite quit request). Gracefully shutting down HTTP server...');
+  server.close(() => {
+    logger.info('HTTP server closed.');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('Received SIGINT signal. Shutting down...');
+  server.close(() => {
+    process.exit(0);
+  });
 });
 
 module.exports = { app, io };
