@@ -64,7 +64,8 @@ class PharmacyModel {
     }
   }
 
-  static async findAll() {
+  static async findAll(include_deleted = false) {
+    const whereClause = include_deleted ? '' : 'WHERE p.deleted_at IS NULL';
     const result = await pool.query(`
       SELECT p.*,
         s.plan, s.status as subscription_status, s.expires_at,
@@ -82,7 +83,7 @@ class PharmacyModel {
         ORDER BY created_at ASC
         LIMIT 1
       ) u_admin ON true
-      WHERE p.deleted_at IS NULL
+      ${whereClause}
       GROUP BY p.id, s.plan, s.status, s.expires_at, u_admin.email, u_admin.full_name, u_admin.id
       ORDER BY p.created_at DESC
     `);

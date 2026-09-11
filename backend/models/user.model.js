@@ -13,15 +13,21 @@ class UserModel {
   }
 
   static async findByEmail(email, pharmacy_id = null) {
-    let query = `SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND is_active = true`;
+    let query = `SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))`;
     const params = [email];
     if (pharmacy_id) { params.push(pharmacy_id); query += ` AND pharmacy_id = $2`; }
+    query += ` ORDER BY is_active DESC, created_at DESC LIMIT 1`;
     const result = await pool.query(query, params);
     return result.rows[0];
   }
 
   static async findByEmailGlobal(email) {
-    const result = await pool.query(`SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND is_active = true`, [email]);
+    const result = await pool.query(`
+      SELECT * FROM users
+      WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))
+      ORDER BY is_active DESC, created_at DESC
+      LIMIT 1
+    `, [email]);
     return result.rows[0];
   }
 

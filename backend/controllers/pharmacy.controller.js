@@ -136,8 +136,9 @@ const createPharmacy = async (req, res) => {
 
 const getAllPharmacies = async (req, res) => {
   try {
+    const includeDeleted = req.query.include_deleted === 'true' || req.query.include_deleted === true;
     const PharmacyModel = require('../models/pharmacy.model');
-    const pharmacies = await PharmacyModel.findAll();
+    const pharmacies = await PharmacyModel.findAll(includeDeleted);
     return successResponse(res, 200, 'Facilities fetched', pharmacies);
   } catch (error) { return errorResponse(res, 500, 'Failed to fetch facilities'); }
 };
@@ -270,6 +271,35 @@ const deletePharmacy = async (req, res) => {
   } catch (error) {
     logger.error('Failed to delete facility:', error.message);
     return errorResponse(res, 500, 'Failed to delete facility');
+  }
+};
+
+const restorePharmacy = async (req, res) => {
+  try {
+    const { pharmacy_id } = req.params;
+    const pRes = await pool.query(`SELECT * FROM pharmacies WHERE id = $1`, [pharmacy_id]);
+    if (pRes.rows.length === 0) return errorResponse(res, 404, 'Facility not found');
+
+    await pool.query(`UPDATE pharmacies SET deleted_at = NULL, is_active = true WHERE id = $1`, [pharmacy_id]);
+    await pool.query(`UPDATE users SET is_active = true WHERE pharmacy_id = $1`, [pharmacy_id]);
+
+    const subRes = await pool.query(`SELECT id, expires_at FROM subscriptions WHERE pharmacy_id = $1`, [pharmacy_id]);
+    const now = new Date();
+    if (subRes.rows.length > 0) {
+      if (!subRes.rows[0].expires_at || new Date(subRes.rows[0].expires_at) < now) {
+        await pool.query(`UPDATE subscriptions SET status = 'active', expires_at = NOW() + INTERVAL '30 days', updated_at = NOW() WHERE pharmacy_id = $1`, [pharmacy_id]);
+      } else {
+        await pool.query(`UPDATE subscriptions SET status = 'active', updated_at = NOW() WHERE pharmacy_id = $1`, [pharmacy_id]);
+      }
+    } else {
+      await pool.query(`INSERT INTO subscriptions (pharmacy_id, plan, status, expires_at) VALUES ($1, 'trial', 'active', NOW() + INTERVAL '30 days')`, [pharmacy_id]);
+    }
+
+    logger.info(`Super Admin restored facility ${pharmacy_id} and its associated users.`);
+    return successResponse(res, 200, 'Facility and associated user accounts restored and activated successfully');
+  } catch (error) {
+    logger.error('Failed to restore facility:', error.message);
+    return errorResponse(res, 500, 'Failed to restore facility');
   }
 };
 
@@ -411,4 +441,4 @@ const resetAdminPassword = async (req, res) => {
   }
 };
 
-module.exports = { createPharmacy, getAllPharmacies, updateSubscription, togglePharmacy, deletePharmacy, requestAdminOtp, resetAdminPassword, getMyPharmacy, updateSettings, updatePharmacyInfo };
+module.exports = { createPharmacy, getAllPharmacies, updateSubscription, togglePharmacy, deletePharmacy, restorePharmacy, requestAdminOtp, resetAdminPassword, getMyPharmacy, updateSettings, updatePharmacyInfo };

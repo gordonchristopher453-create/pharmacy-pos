@@ -4,7 +4,7 @@ const router = express.Router();
 const { successResponse, errorResponse } = require("../utils/response");
 const {
   createPharmacy, getAllPharmacies, updateSubscription,
-  togglePharmacy, deletePharmacy, requestAdminOtp, resetAdminPassword, getMyPharmacy, updateSettings, updatePharmacyInfo
+  togglePharmacy, deletePharmacy, restorePharmacy, requestAdminOtp, resetAdminPassword, getMyPharmacy, updateSettings, updatePharmacyInfo
 } = require('../controllers/pharmacy.controller');
 const { protect, superAdminOnly, authorize, requirePharmacy } = require('../middleware/auth.middleware');
 const StockModel = require('../models/stock.model');
@@ -14,6 +14,7 @@ router.get('/all', protect, superAdminOnly, getAllPharmacies);
 router.post('/create', protect, superAdminOnly, createPharmacy);
 router.put('/:pharmacy_id/subscription', protect, superAdminOnly, updateSubscription);
 router.put('/:pharmacy_id/toggle', protect, superAdminOnly, togglePharmacy);
+router.put('/:pharmacy_id/restore', protect, superAdminOnly, restorePharmacy);
 router.post('/:pharmacy_id/request-admin-otp', protect, superAdminOnly, requestAdminOtp);
 router.put('/:pharmacy_id/reset-admin-password', protect, superAdminOnly, resetAdminPassword);
 router.delete('/:pharmacy_id', protect, superAdminOnly, deletePharmacy);

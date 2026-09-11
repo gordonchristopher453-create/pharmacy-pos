@@ -60,13 +60,14 @@ export default function SuperAdminPage() {
   };
 
   const [form, setForm] = useState(initialForm);
+  const [showDeleted, setShowDeleted] = useState(true);
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(showDeleted); }, [showDeleted]);
 
-  const fetchAll = async () => {
+  const fetchAll = async (includeDeleted = showDeleted) => {
     setLoading(true);
     try {
-      const pharRes = await api.get('/pharmacy/all');
+      const pharRes = await api.get(`/pharmacy/all?include_deleted=${includeDeleted}`);
       setPharmacies(pharRes.data.data);
     } catch (error) {
       toast.error('Failed to load data');
@@ -92,9 +93,19 @@ export default function SuperAdminPage() {
   const handleDelete = async (pharmacy) => {
     try {
       await api.delete(`/pharmacy/${pharmacy.id}`, { data: { confirm: true } });
-      toast.success(`${pharmacy.name} deleted`);
+      toast.success(`${pharmacy.name} archived/deleted`);
       fetchAll();
     } catch { toast.error("Failed to delete facility"); }
+  };
+
+  const handleRestore = async (pharmacy) => {
+    try {
+      await api.put(`/pharmacy/${pharmacy.id}/restore`);
+      toast.success(`${pharmacy.name} restored and activated successfully!`);
+      fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to restore facility');
+    }
   };
 
   const handleToggle = async (pharmacy) => {
@@ -268,6 +279,28 @@ export default function SuperAdminPage() {
         ))}
       </div>
 
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setShowDeleted(false)} style={{
+            padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: !showDeleted ? 'var(--accent)' : 'var(--bg-elevated)',
+            color: !showDeleted ? '#0F1612' : 'var(--text-muted)', border: '1px solid var(--border)'
+          }}>
+            Active Facilities Only
+          </button>
+          <button onClick={() => setShowDeleted(true)} style={{
+            padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: showDeleted ? 'var(--accent)' : 'var(--bg-elevated)',
+            color: showDeleted ? '#0F1612' : 'var(--text-muted)', border: '1px solid var(--border)'
+          }}>
+            All Facilities (Including Archived & Expired)
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Showing {pharmacies.length} facilities
+        </div>
+      </div>
+
       <Card>
         {loading ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>
@@ -285,11 +318,11 @@ export default function SuperAdminPage() {
               </thead>
               <tbody>
                 {pharmacies.length === 0 ? (
-                  <tr><td colSpan={9} style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>No facilities yet. Create your first one.</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>No facilities found. Create your first one.</td></tr>
                 ) : pharmacies.map(p => {
                   const expired = isExpiredSub(p);
                   return (
-                    <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}
+                    <tr key={p.id} style={{ borderBottom: '1px solid var(--border)', opacity: p.deleted_at ? 0.75 : 1 }}
                       onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                       <td style={{ padding: '12px 16px' }}>
@@ -331,42 +364,53 @@ export default function SuperAdminPage() {
                           background: p.deleted_at ? "var(--danger)20" : p.is_active ? "var(--accent)20" : "var(--warning)20",
                           color: p.deleted_at ? "var(--danger)" : p.is_active ? "var(--accent)" : "var(--warning)"
                         }}>
-                          {p.deleted_at ? "🗑 Deleted" : p.is_active ? "Enabled" : "Disabled"}
+                          {p.deleted_at ? "🗑 Archived/Deleted" : p.is_active ? "Enabled" : "Disabled"}
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
-                        <button onClick={() => handleOpenResetAdminModal(p)} style={{
-                          padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)',
-                          background: 'var(--bg-elevated)', color: 'var(--accent)',
-                          display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 4
-                        }}>
-                          <Key size={12} /> Reset Admin Pass
-                        </button>
-                        <button onClick={() => handleOpenSubModal(p)} style={{
-                          padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)',
-                          background: expired ? 'var(--danger)15' : 'var(--bg-elevated)',
-                          color: expired ? 'var(--danger)' : 'var(--text-primary)',
-                          display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 4
-                        }}>
-                          <RefreshCw size={12} /> {expired ? 'Renew Sub' : 'Subscription'}
-                        </button>
-                        <button onClick={() => handleToggle(p)} style={{
-                          padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
-                          background: p.is_active ? 'var(--danger)20' : 'var(--accent)20',
-                          color: p.is_active ? 'var(--danger)' : 'var(--accent)', marginRight: 4
-                        }}>
-                          {p.is_active ? 'Disable' : 'Enable'}
-                        </button>
-                        <button onClick={() => {
-                          if (window.confirm(`Are you sure you want to DELETE ${p.name}? This cannot be undone.`)) {
-                            handleDelete(p);
-                          }
-                        }} style={{
-                          padding: "6px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
-                          background: "var(--danger)20", color: "var(--danger)"
-                        }}>
-                          🗑
-                        </button>
+                        {p.deleted_at ? (
+                          <button onClick={() => handleRestore(p)} style={{
+                            padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                            background: 'var(--accent)', color: '#0F1612', display: 'inline-flex', alignItems: 'center', gap: 5
+                          }}>
+                            <CheckCircle size={13} /> Restore & Activate
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={() => handleOpenResetAdminModal(p)} style={{
+                              padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)',
+                              background: 'var(--bg-elevated)', color: 'var(--accent)',
+                              display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 4
+                            }}>
+                              <Key size={12} /> Reset Admin Pass
+                            </button>
+                            <button onClick={() => handleOpenSubModal(p)} style={{
+                              padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)',
+                              background: expired ? 'var(--danger)15' : 'var(--bg-elevated)',
+                              color: expired ? 'var(--danger)' : 'var(--text-primary)',
+                              display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 4
+                            }}>
+                              <RefreshCw size={12} /> {expired ? 'Renew Sub' : 'Subscription'}
+                            </button>
+                            <button onClick={() => handleToggle(p)} style={{
+                              padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                              background: p.is_active ? 'var(--danger)20' : 'var(--accent)20',
+                              color: p.is_active ? 'var(--danger)' : 'var(--accent)', marginRight: 4
+                            }}>
+                              {p.is_active ? 'Disable' : 'Enable'}
+                            </button>
+                            <button onClick={() => {
+                              if (window.confirm(`Are you sure you want to ARCHIVE/DELETE ${p.name}?`)) {
+                                handleDelete(p);
+                              }
+                            }} style={{
+                              padding: "6px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                              background: "var(--danger)20", color: "var(--danger)"
+                            }}>
+                              🗑
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   );
