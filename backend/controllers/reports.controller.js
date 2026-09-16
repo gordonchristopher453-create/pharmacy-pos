@@ -90,37 +90,80 @@ const getDailySummaryReport = async (req, res) => {
   try {
     const pharmacy_id = req.pharmacy_id;
     const date = req.query.date || new Date().toISOString().split('T')[0];
-    const [visits, sales, labs, billing] = await Promise.all([
-      pool.query(`
-        SELECT v.*, p.full_name as patient_name, p.patient_number, p.gender, p.date_of_birth, p.phone
-        FROM visits v JOIN patients p ON v.patient_id::text=p.id::text
-        WHERE (v.pharmacy_id::text=$1::text OR v.pharmacy_id IS NULL) AND DATE(v.visit_date)=$2 ORDER BY v.visit_date ASC
-      `, [pharmacy_id, date]),
-      pool.query(`
-        SELECT COALESCE(SUM(total_amount),0) as total_sales, COUNT(*) as total_transactions,
-               COALESCE(SUM(CASE WHEN payment_method='mpesa' THEN total_amount ELSE 0 END),0) as mpesa,
-               COALESCE(SUM(CASE WHEN payment_method='cash' THEN total_amount ELSE 0 END),0) as cash
-        FROM sales WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]),
-      pool.query(`
-        SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='Completed') as completed
-        FROM lab_requests WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]),
-      pool.query(`
-        SELECT COALESCE(SUM(amount),0) as total_collected, COUNT(*) as total_payments
-        FROM payments WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
-      `, [pharmacy_id, date]).catch(() => ({ rows: [{ total_collected: 0, total_payments: 0 }] })),
+
+    const pharmacyPromise = pool.query(
+      `SELECT id, name, address, phone, email, facility_type, receipt_header FROM pharmacies WHERE id::text=$1::text`,
+      [pharmacy_id]
+    ).catch(() => ({ rows: [] }));
+
+    const visitsPromise = pool.query(`
+      SELECT v.*, p.full_name as patient_name, p.patient_number, p.gender, p.date_of_birth, p.phone
+      FROM visits v 
+      JOIN patients p ON v.patient_id::text=p.id::text
+      WHERE (v.pharmacy_id::text=$1::text OR v.pharmacy_id IS NULL) 
+        AND DATE(COALESCE(v.visit_date, v.created_at))=$2 
+      ORDER BY COALESCE(v.visit_date, v.created_at) ASC
+    `, [pharmacy_id, date]).catch(() => ({ rows: [] }));
+
+    const salesSummaryPromise = SaleModel.getDailySummary(date, pharmacy_id).catch(() => ({
+      total_transactions: 0, total_revenue: 0, total_sales: 0, total_discounts: 0,
+      cash_total: 0, cash: 0, mpesa_total: 0, mpesa: 0, card_total: 0, card: 0,
+      insurance_total: 0, insurance: 0, total_cost: 0, total_profit: 0
+    }));
+
+    const dailySalesPromise = pool.query(`
+      SELECT s.id, s.receipt_number, s.total, s.subtotal, s.discount, s.payment_method, s.created_at,
+             u.full_name as cashier_name,
+             COUNT(si.id) as item_count
+      FROM sales s
+      LEFT JOIN users u ON s.user_id::text = u.id::text
+      LEFT JOIN sale_items si ON s.id::text = si.sale_id::text
+      WHERE DATE(s.created_at)=$2 AND (s.pharmacy_id::text=$1::text OR s.pharmacy_id IS NULL)
+      GROUP BY s.id, s.receipt_number, s.total, s.subtotal, s.discount, s.payment_method, s.created_at, u.full_name
+      ORDER BY s.created_at DESC
+      LIMIT 100
+    `, [pharmacy_id, date]).catch(() => ({ rows: [] }));
+
+    const labsPromise = pool.query(`
+      SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='Completed') as completed
+      FROM lab_requests WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
+    `, [pharmacy_id, date]).catch(() => ({ rows: [{ total: 0, completed: 0 }] }));
+
+    const billingPromise = pool.query(`
+      SELECT COALESCE(SUM(amount),0) as total_collected, COUNT(*) as total_payments
+      FROM payments WHERE (pharmacy_id::text=$1::text OR pharmacy_id IS NULL) AND DATE(created_at)=$2
+    `, [pharmacy_id, date]).catch(() => ({ rows: [{ total_collected: 0, total_payments: 0 }] }));
+
+    const topProductsPromise = SaleModel.getTopProducts(pharmacy_id, 10, date, date).catch(() => []);
+
+    const [pharmacyRes, visitsRes, salesSummary, dailySalesRes, labsRes, billingRes, topProducts] = await Promise.all([
+      pharmacyPromise,
+      visitsPromise,
+      salesSummaryPromise,
+      dailySalesPromise,
+      labsPromise,
+      billingPromise,
+      topProductsPromise
     ]);
-    const pharmacy = await pool.query(`SELECT name, address, phone FROM pharmacies WHERE id::text=$1::text`, [pharmacy_id]);
+
+    const pharmacy = pharmacyRes.rows[0] || {};
+    const facility_type = pharmacy.facility_type || 'hospital';
+
     return successResponse(res, 200, 'Daily summary fetched', {
       date,
-      pharmacy: pharmacy.rows[0] || {},
-      visits: visits.rows,
-      sales_summary: sales.rows[0],
-      lab_summary: labs.rows[0],
-      billing_summary: billing.rows[0],
+      facility_type,
+      pharmacy,
+      visits: visitsRes.rows || [],
+      sales_summary: salesSummary || {},
+      daily_sales: dailySalesRes.rows || [],
+      top_products: topProducts || [],
+      lab_summary: labsRes.rows[0] || { total: 0, completed: 0 },
+      billing_summary: billingRes.rows[0] || { total_collected: 0, total_payments: 0 },
     });
-  } catch (e) { return errorResponse(res, 500, e.message); }
+  } catch (e) { 
+    console.error('Daily summary report error:', e);
+    return errorResponse(res, 500, e.message); 
+  }
 };
 
 const getPatientHistory = async (req, res) => {

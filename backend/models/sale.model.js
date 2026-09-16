@@ -81,20 +81,33 @@ class SaleModel {
 
   static async getDailySummary(date, pharmacy_id) {
     const result = await pool.query(`
-      SELECT
-        COUNT(DISTINCT s.id) as total_transactions,
-        COALESCE(SUM(s.total), 0) as total_revenue,
-        COALESCE(SUM(s.discount), 0) as total_discounts,
-        COALESCE(SUM(CASE WHEN s.payment_method = 'cash' THEN s.total ELSE 0 END), 0) as cash_total,
-        COALESCE(SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total ELSE 0 END), 0) as mpesa_total,
-        COALESCE(SUM(CASE WHEN s.payment_method = 'card' THEN s.total ELSE 0 END), 0) as card_total,
-        COALESCE(SUM(CASE WHEN s.payment_method = 'insurance' THEN s.total ELSE 0 END), 0) as insurance_total,
-        COALESCE(SUM(si.quantity * COALESCE(p.buying_price, 0)), 0) as total_cost,
-        COALESCE(SUM(si.total_price - (si.quantity * COALESCE(p.buying_price, 0))), 0) as total_profit
-      FROM sales s
-      LEFT JOIN sale_items si ON s.id::text = si.sale_id::text
-      LEFT JOIN products p ON si.product_id::text = p.id::text
-      WHERE DATE(s.created_at) = $1 AND (s.pharmacy_id::text = $2::text OR s.pharmacy_id IS NULL)
+      WITH s_summary AS (
+        SELECT
+          COUNT(*) as total_transactions,
+          COALESCE(SUM(total), 0) as total_revenue,
+          COALESCE(SUM(total), 0) as total_sales,
+          COALESCE(SUM(discount), 0) as total_discounts,
+          COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total ELSE 0 END), 0) as cash_total,
+          COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total ELSE 0 END), 0) as cash,
+          COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN total ELSE 0 END), 0) as mpesa_total,
+          COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN total ELSE 0 END), 0) as mpesa,
+          COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total ELSE 0 END), 0) as card_total,
+          COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total ELSE 0 END), 0) as card,
+          COALESCE(SUM(CASE WHEN payment_method = 'insurance' THEN total ELSE 0 END), 0) as insurance_total,
+          COALESCE(SUM(CASE WHEN payment_method = 'insurance' THEN total ELSE 0 END), 0) as insurance
+        FROM sales
+        WHERE DATE(created_at) = $1 AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL)
+      ),
+      cost_summary AS (
+        SELECT
+          COALESCE(SUM(si.quantity * COALESCE(p.buying_price, 0)), 0) as total_cost,
+          COALESCE(SUM(si.total_price - (si.quantity * COALESCE(p.buying_price, 0))), 0) as total_profit
+        FROM sale_items si
+        JOIN sales s ON si.sale_id::text = s.id::text
+        LEFT JOIN products p ON si.product_id::text = p.id::text
+        WHERE DATE(s.created_at) = $1 AND (s.pharmacy_id::text = $2::text OR s.pharmacy_id IS NULL)
+      )
+      SELECT * FROM s_summary CROSS JOIN cost_summary
     `, [date, pharmacy_id]);
     return result.rows[0];
   }

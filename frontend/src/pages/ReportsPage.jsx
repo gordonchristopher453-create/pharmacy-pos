@@ -20,6 +20,7 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 export default function ReportsPage() {
   const { user } = useSelector(s => s.auth);
   const isLab = user?.role === 'lab_technician';
+  const isPharmacyOnly = user?.pharmacy?.facility_type === 'pharmacy';
   const printRef = useRef();
 
   const [tab, setTab] = useState('daily');
@@ -531,14 +532,18 @@ export default function ReportsPage() {
         date_from: dailyDate,
         date_to: dailyDate,
         summary: {
-          total_revenue: dailyData.sales_summary?.total_sales || 0,
+          total_revenue: dailyData.sales_summary?.total_sales || dailyData.sales_summary?.total_revenue || 0,
           total_transactions: dailyData.sales_summary?.total_transactions || 0,
-          cash_total: dailyData.sales_summary?.cash || 0,
-          mpesa_total: dailyData.sales_summary?.mpesa || 0,
-          card_total: dailyData.sales_summary?.card || 0,
-          insurance_total: dailyData.sales_summary?.insurance || 0,
+          cash_total: dailyData.sales_summary?.cash || dailyData.sales_summary?.cash_total || 0,
+          mpesa_total: dailyData.sales_summary?.mpesa || dailyData.sales_summary?.mpesa_total || 0,
+          card_total: dailyData.sales_summary?.card || dailyData.sales_summary?.card_total || 0,
+          insurance_total: dailyData.sales_summary?.insurance || dailyData.sales_summary?.insurance_total || 0,
+          total_cost: dailyData.sales_summary?.total_cost || 0,
+          total_profit: dailyData.sales_summary?.total_profit || 0,
         },
+        top_products: dailyData.top_products || [],
         visits: dailyData.visits || [],
+        items: dailyData.daily_sales || [],
         generated_by: user?.full_name || 'Staff In-Charge',
         currency: 'KES'
       });
@@ -615,7 +620,7 @@ export default function ReportsPage() {
         <Tab label="🧬 Patient History" active={tab==='history'} onClick={() => setTab('history')} />
         {!isLab && <Tab label="📅 Monthly Trend" active={tab==='monthly'} onClick={() => setTab('monthly')} />}
         <Tab label="📦 Stock Alerts" active={tab==='stock'} onClick={() => setTab('stock')} />
-        <Tab label="🏛 MOH National Reports" active={tab==='moh'} onClick={() => setTab('moh')} />
+        {!isLab && !isPharmacyOnly && <Tab label="🏛 MOH National Reports" active={tab==='moh'} onClick={() => setTab('moh')} />}
         {isLab && <Tab label="🔬 MOH Reports" active={tab==='lab'} onClick={() => setTab('lab')} />}
       </div>
 
@@ -655,20 +660,51 @@ export default function ReportsPage() {
           {/* ── DAILY SUMMARY ── */}
           {tab === 'daily' && dailyData && (
             <div ref={printRef}>
-              {/* Print Header */}
-              <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '2px solid var(--border)' }}>
-                <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>{dailyData.pharmacy?.name || 'Medicare HMS'}</h2>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{dailyData.pharmacy?.address} {dailyData.pharmacy?.phone ? `• ${dailyData.pharmacy.phone}` : ''}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginTop: 6 }}>Daily Summary Report — {fmtDate(dailyData.date)}</div>
+              {/* Facility Header */}
+              <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                      {dailyData.pharmacy?.name || (isPharmacyOnly ? 'Retail & Dispensing Pharmacy' : 'Medicare Hospital')}
+                    </h2>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: isPharmacyOnly ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)', color: isPharmacyOnly ? 'var(--warning)' : 'var(--info)' }}>
+                      {isPharmacyOnly ? '💊 Standalone Pharmacy' : '🏥 Hospital Facility'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {dailyData.pharmacy?.address || 'Main Facility'} {dailyData.pharmacy?.phone ? `• ${dailyData.pharmacy.phone}` : ''}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginTop: 6 }}>
+                    Daily Summary Report — {fmtDate(dailyData.date)}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <button 
+                    onClick={handlePrint}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--accent)', color: '#0F1612', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <Printer size={14} /> Print Summary
+                  </button>
+                </div>
               </div>
 
               {/* Summary Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}>
-                {[
-                  { label: 'Total Patients', value: dailyData.visits?.length || 0, color: 'var(--accent)' },
-                  { label: 'Total Sales', value: fmt(dailyData.sales_summary?.total_sales), color: 'var(--info)' },
-                  { label: 'Lab Tests', value: `${dailyData.lab_summary?.completed || 0}/${dailyData.lab_summary?.total || 0}`, color: 'var(--warning)' },
-                  { label: 'M-Pesa', value: fmt(dailyData.sales_summary?.mpesa), color: 'var(--success)' },
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 24 }}>
+                {isPharmacyOnly ? [
+                  { label: 'Total Sales Revenue', value: fmt(dailyData.sales_summary?.total_sales || dailyData.sales_summary?.total_revenue), color: 'var(--accent)' },
+                  { label: 'Total Transactions', value: dailyData.sales_summary?.total_transactions || 0, color: 'var(--info)' },
+                  { label: 'Cash Collected', value: fmt(dailyData.sales_summary?.cash || dailyData.sales_summary?.cash_total), color: 'var(--warning)' },
+                  { label: 'M-Pesa Collected', value: fmt(dailyData.sales_summary?.mpesa || dailyData.sales_summary?.mpesa_total), color: 'var(--success)' },
+                ].map(({ label, value, color }) => (
+                  <Card key={label} style={{ padding: 18 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 4 }}>{value}</div>
+                  </Card>
+                )) : [
+                  { label: 'Total Patients Attended', value: dailyData.visits?.length || 0, color: 'var(--accent)' },
+                  { label: 'Pharmacy Sales', value: fmt(dailyData.sales_summary?.total_sales || dailyData.sales_summary?.total_revenue), color: 'var(--info)' },
+                  { label: 'Hospital Billing Payments', value: fmt(dailyData.billing_summary?.total_collected), color: 'var(--success)' },
+                  { label: 'Lab Tests (Done/Total)', value: `${dailyData.lab_summary?.completed || 0}/${dailyData.lab_summary?.total || 0}`, color: 'var(--warning)' },
                 ].map(({ label, value, color }) => (
                   <Card key={label} style={{ padding: 18 }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{label}</div>
@@ -677,51 +713,108 @@ export default function ReportsPage() {
                 ))}
               </div>
 
-              {/* Patients Table */}
-              <Card style={{ padding: 20, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>👥 Patients Attended</div>
-                {(dailyData.visits || []).length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-faint)', fontSize: 13 }}>No visits for this date</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid var(--border)' }}>
-                        {['#','Patient','No.','Gender','Age','Visit Type','Status','Time'].map(h => (
-                          <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dailyData.visits.map((v, i) => (
-                        <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-faint)' }}>{i+1}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{v.patient_name}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.patient_number}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.gender}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{age(v.date_of_birth)}</td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.visit_type?.toUpperCase()}</td>
-                          <td style={{ padding: '9px 10px' }}>
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: v.status==='discharged'||v.status==='Completed' ? 'var(--accent-soft)' : 'var(--bg-elevated)', color: v.status==='discharged'||v.status==='Completed' ? 'var(--accent)' : 'var(--text-muted)' }}>
-                              {v.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{new Date(v.visit_date).toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </Card>
+              {/* Section 2: Hospital Visits (if hospital) OR Counter Sales (if pharmacy) */}
+              {!isPharmacyOnly && (
+                <Card style={{ padding: 20, marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>
+                    👥 Patients Attended (OPD & IPD Visits)
+                  </div>
+                  {(dailyData.visits || []).length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-faint)', fontSize: 13 }}>No hospital visits recorded for this date</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                            {['#','Patient','No.','Gender','Age','Visit Type','Status','Time'].map(h => (
+                              <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dailyData.visits.map((v, i) => (
+                            <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-faint)' }}>{i+1}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{v.patient_name}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.patient_number}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.gender}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{age(v.date_of_birth)}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{v.visit_type?.toUpperCase()}</td>
+                              <td style={{ padding: '9px 10px' }}>
+                                <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: v.status==='discharged'||v.status==='Completed' ? 'var(--accent-soft)' : 'var(--bg-elevated)', color: v.status==='discharged'||v.status==='Completed' ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                  {v.status}
+                                </span>
+                              </td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{new Date(v.visit_date || v.created_at).toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              )}
 
-              {/* Sales Breakdown */}
+              {/* Standalone Pharmacy: Dispensed Counter Sales */}
+              {isPharmacyOnly && (
+                <Card style={{ padding: 20, marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>
+                    🛒 Dispensed Counter Sales ({dailyData.daily_sales?.length || 0})
+                  </div>
+                  {(dailyData.daily_sales || []).length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-faint)', fontSize: 13 }}>No counter sales recorded for this date</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                            {['#', 'Receipt #', 'Cashier', 'Items', 'Payment Method', 'Total (KES)', 'Time'].map(h => (
+                              <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dailyData.daily_sales.map((s, i) => (
+                            <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-faint)' }}>{i+1}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.receipt_number || `REC-${s.id.slice(0,6)}`}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{s.cashier_name || 'Cashier'}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>{s.item_count || 1} item(s)</td>
+                              <td style={{ padding: '9px 10px' }}>
+                                <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+                                  {s.payment_method}
+                                </span>
+                              </td>
+                              <td style={{ padding: '9px 10px', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{fmt(s.total)}</td>
+                              <td style={{ padding: '9px 10px', fontSize: 12, color: 'var(--text-muted)' }}>
+                                {new Date(s.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              )}
+
+              {/* Revenue & Payment Breakdown */}
               <Card style={{ padding: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>💰 Revenue Breakdown</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>
+                  💰 Daily Income & Payment Breakdown
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
                   {[
-                    { label: 'Cash Sales', value: fmt(dailyData.sales_summary?.cash) },
-                    { label: 'M-Pesa Sales', value: fmt(dailyData.sales_summary?.mpesa) },
+                    { label: 'Cash Collections', value: fmt(dailyData.sales_summary?.cash || dailyData.sales_summary?.cash_total) },
+                    { label: 'M-Pesa Mobile Money', value: fmt(dailyData.sales_summary?.mpesa || dailyData.sales_summary?.mpesa_total) },
+                    { label: 'Card / POS Payments', value: fmt(dailyData.sales_summary?.card || dailyData.sales_summary?.card_total) },
+                    { label: 'Insurance / Corporate Claims', value: fmt(dailyData.sales_summary?.insurance || dailyData.sales_summary?.insurance_total) },
                     { label: 'Total Transactions', value: dailyData.sales_summary?.total_transactions || 0 },
-                    { label: 'Total Revenue', value: fmt(dailyData.sales_summary?.total_sales) },
+                    { label: 'Total Revenue', value: fmt(dailyData.sales_summary?.total_sales || dailyData.sales_summary?.total_revenue) },
+                    ...(dailyData.sales_summary?.total_profit && parseFloat(dailyData.sales_summary?.total_profit) > 0 ? [
+                      { label: 'Inventory Cost (COGS)', value: fmt(dailyData.sales_summary?.total_cost) },
+                      { label: 'Estimated Gross Profit', value: fmt(dailyData.sales_summary?.total_profit) },
+                    ] : []),
                   ].map(({ label, value }) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</span>
@@ -729,8 +822,9 @@ export default function ReportsPage() {
                     </div>
                   ))}
                 </div>
-                <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                  Printed: {new Date().toLocaleString('en-KE')} • {user?.full_name}
+                <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-faint)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  <span>Generated for: {dailyData.pharmacy?.name || 'Facility'} ({isPharmacyOnly ? 'Pharmacy' : 'Hospital'})</span>
+                  <span>Report Time: {new Date().toLocaleString('en-KE')} • Operator: {user?.full_name}</span>
                 </div>
               </Card>
             </div>
