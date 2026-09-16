@@ -302,8 +302,8 @@ const getPharmacyQueue = async (req, res) => {
       LEFT JOIN consultations c ON v.id::text = c.visit_id::text AND (c.pharmacy_id::text = $1::text OR c.pharmacy_id IS NULL)
       LEFT JOIN users u ON c.doctor_id::text = u.id::text
       LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
-      LEFT JOIN wards w ON b.ward_id = w.id
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
       JOIN prescriptions pr ON v.id::text = pr.visit_id::text AND (pr.status = 'pending' OR pr.status IS NULL)
       WHERE (v.pharmacy_id::text = $1::text OR v.pharmacy_id IS NULL)
         ${extraClauses}

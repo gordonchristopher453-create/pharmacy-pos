@@ -1159,8 +1159,8 @@ router.get('/pharmacy-queue', async (req, res) => {
       JOIN visits v ON iro.visit_id::text = v.id::text
       JOIN patients p ON iro.patient_id::text = p.id::text
       LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
-      LEFT JOIN wards w ON b.ward_id = w.id
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
       LEFT JOIN users u ON iro.prescribed_by::text = u.id::text
       WHERE (iro.pharmacy_id::text = $1::text OR iro.pharmacy_id IS NULL)
         AND (iro.status = 'pending' OR iro.status IS NULL)
@@ -1192,8 +1192,8 @@ router.get('/pharmacy-queue', async (req, res) => {
       JOIN visits v ON pr.visit_id::text = v.id::text
       JOIN patients p ON pr.patient_id::text = p.id::text
       LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
-      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id = b.id)
-      LEFT JOIN wards w ON b.ward_id = w.id
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
       LEFT JOIN users u ON pr.doctor_id::text = u.id::text
       WHERE (pr.pharmacy_id::text = $1::text OR pr.pharmacy_id IS NULL)
         AND (pr.status = 'pending' OR pr.status IS NULL)

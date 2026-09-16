@@ -31,12 +31,25 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
     await client.query('BEGIN');
     const { status } = req.body;
 
-    // 1. Fetch prescription
+    // 1. Fetch prescription or injection room order
     const prescQuery = await client.query(
-      "SELECT * FROM prescriptions WHERE id=$1 AND (pharmacy_id=$2 OR pharmacy_id IS NULL)",
+      "SELECT * FROM prescriptions WHERE id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL)",
       [req.params.id, req.pharmacy_id]
     );
-    const prescription = prescQuery.rows[0];
+    let prescription = prescQuery.rows[0];
+    let isInjectionRoomOrder = false;
+
+    if (!prescription) {
+      const iroQuery = await client.query(
+        "SELECT * FROM injection_room_orders WHERE id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL)",
+        [req.params.id, req.pharmacy_id]
+      );
+      if (iroQuery.rows[0]) {
+        prescription = iroQuery.rows[0];
+        isInjectionRoomOrder = true;
+      }
+    }
+
     if (!prescription) {
       await client.query('ROLLBACK');
       return errorResponse(res, 404, "Prescription not found");
@@ -53,10 +66,10 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
       `SELECT status, visit_type FROM visits WHERE id::text = $1 LIMIT 1`,
       [String(prescription.visit_id)]
     );
-    const isInpatientVisit = visitRes.rows[0] && (
+    const isInpatientVisit = isInjectionRoomOrder || (visitRes.rows[0] && (
       visitRes.rows[0].status === 'inpatient' ||
       (visitRes.rows[0].visit_type && visitRes.rows[0].visit_type.toLowerCase() === 'inpatient')
-    );
+    ));
 
     // 2. Payment gate check for outpatient visits only (Inpatients pay on running account)
     if (!isInpatientVisit) {
@@ -91,19 +104,28 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
       }
     }
 
-    // 3. Deduct pharmacy stock if product_id is linked
-    if (prescription.product_id && prescription.quantity) {
+    // 3. Deduct pharmacy stock if product_id is linked or matchable
+    let productIdToDeduct = prescription.product_id;
+    if (!productIdToDeduct && prescription.drug_name) {
+      const prodMatch = await client.query(
+        `SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND (pharmacy_id::text = $2::text OR pharmacy_id IS NULL) LIMIT 1`,
+        [prescription.drug_name.trim(), req.pharmacy_id]
+      );
+      if (prodMatch.rows[0]) productIdToDeduct = prodMatch.rows[0].id;
+    }
+
+    if (productIdToDeduct && prescription.quantity) {
       const qty = parseFloat(prescription.quantity);
       if (qty > 0) {
         try {
-          await StockModel.deductStock(prescription.product_id, qty, client, req.pharmacy_id);
+          await StockModel.deductStock(productIdToDeduct, qty, client, req.pharmacy_id);
           
           // Log stock movement
           await client.query(`
             INSERT INTO stock_movements (product_id, user_id, movement_type, quantity, notes, pharmacy_id)
             VALUES ($1, $2, 'sale', $3, $4, $5)
           `, [
-            prescription.product_id, 
+            productIdToDeduct, 
             req.user.id, 
             -qty, 
             `Dispensed prescription: ${prescription.drug_name} (Visit ID: ${prescription.visit_id})`, 
@@ -117,10 +139,43 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
     }
 
     // 4. Update prescription status
-    const result = await client.query(
-      `UPDATE prescriptions SET status=$1, dispensed_at=NOW(), dispensed_by=$2 WHERE id=$3 AND (pharmacy_id=$4 OR pharmacy_id IS NULL) RETURNING *`,
-      [status || "dispensed", req.user.id, req.params.id, req.pharmacy_id]
-    );
+    let resultRow;
+    if (isInjectionRoomOrder) {
+      const iroRes = await client.query(
+        `UPDATE injection_room_orders SET status=$1, updated_at=NOW() WHERE id::text=$2::text AND (pharmacy_id::text=$3::text OR pharmacy_id IS NULL) RETURNING *`,
+        [status || "dispensed", req.params.id, req.pharmacy_id]
+      );
+      resultRow = iroRes.rows[0] || prescription;
+
+      // Sync or insert into prescriptions table
+      const linkedRx = await client.query(
+        `UPDATE prescriptions SET status=$1, dispensed_at=NOW(), dispensed_by=$2 WHERE visit_id::text=$3::text AND LOWER(TRIM(drug_name))=LOWER(TRIM($4)) RETURNING *`,
+        [status || "dispensed", req.user.id, String(prescription.visit_id), prescription.drug_name]
+      );
+      if (!linkedRx.rows[0]) {
+        await client.query(`
+          INSERT INTO prescriptions (pharmacy_id, visit_id, patient_id, drug_name, dosage, route, frequency, duration, quantity, product_id, status, dispensed_at, dispensed_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12)
+        `, [
+          req.pharmacy_id, String(prescription.visit_id), String(prescription.patient_id),
+          prescription.drug_name, prescription.dosage || null, prescription.route || 'IV',
+          prescription.frequency || null, prescription.duration || null,
+          prescription.quantity || 1, productIdToDeduct || null, status || 'dispensed', req.user.id
+        ]);
+      }
+    } else {
+      const result = await client.query(
+        `UPDATE prescriptions SET status=$1, dispensed_at=NOW(), dispensed_by=$2 WHERE id::text=$3::text AND (pharmacy_id::text=$4::text OR pharmacy_id IS NULL) RETURNING *`,
+        [status || "dispensed", req.user.id, req.params.id, req.pharmacy_id]
+      );
+      resultRow = result.rows[0];
+
+      // Also sync matching injection room orders if any
+      await client.query(
+        `UPDATE injection_room_orders SET status=$1, updated_at=NOW() WHERE visit_id::text=$2::text AND LOWER(TRIM(drug_name))=LOWER(TRIM($3))`,
+        [status || "dispensed", String(prescription.visit_id), prescription.drug_name]
+      ).catch(() => {});
+    }
 
     // 5. Automatically mark the pharmacy phase as completed if all prescriptions for this visit are now dispensed
     try {
@@ -139,7 +194,7 @@ router.put("/dispense/:id", protect, requirePharmacy, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return successResponse(res, 200, "Dispensed and stock deducted successfully.", result.rows[0]);
+    return successResponse(res, 200, "Dispensed and stock deducted successfully.", resultRow);
   } catch(e) {
     await client.query('ROLLBACK');
     return errorResponse(res, 500, e.message);
