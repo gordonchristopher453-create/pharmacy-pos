@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { Calendar, DollarSign, TrendingUp, Package, Search, Printer, Filter, ShoppingBag, CreditCard, ShieldCheck, PieChart, RefreshCw, Loader } from 'lucide-react';
+import { printDailySalesSummary } from '../utils/printDailySalesSummary';
 
 export default function SalesSummaryPage() {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -60,8 +62,37 @@ export default function SalesSummaryPage() {
     item.category_name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const { user } = useSelector(s => s.auth);
   const totalRevenue = parseFloat(metrics.total_revenue || 0) + parseFloat(rxMetrics.total_rx_collected || 0);
   const totalProfit = parseFloat(metrics.estimated_profit || 0);
+  const totalCost = parseFloat(metrics.total_cost || 0);
+
+  const handlePrint = () => {
+    printDailySalesSummary({
+      pharmacy: user?.pharmacy || {},
+      date_from: dates.from,
+      date_to: dates.to,
+      summary: {
+        total_revenue: totalRevenue,
+        total_transactions: (parseInt(metrics.total_transactions || 0, 10)) + (parseInt(rxMetrics.total_prescriptions || 0, 10)),
+        cash_total: metrics.cash_revenue || 0,
+        mpesa_total: metrics.mpesa_revenue || 0,
+        card_total: metrics.card_revenue || 0,
+        insurance_total: metrics.insurance_revenue || (rxMetrics.total_rx_collected || 0),
+        total_cost: totalCost,
+        total_profit: totalProfit,
+      },
+      top_products: (filteredItems || []).slice(0, 25).map(item => ({
+        name: item.product_name,
+        generic_name: item.generic_name,
+        total_sold: item.total_quantity_sold,
+        total_revenue: item.total_revenue,
+        unit: 'units'
+      })),
+      generated_by: user?.full_name || 'Pharmacist In-Charge',
+      currency: 'KES'
+    });
+  };
 
   return (
     <div style={{ padding: 24, minHeight: '100vh', overflow: 'auto', background: 'var(--bg-main)' }}>
@@ -76,8 +107,8 @@ export default function SalesSummaryPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            <Printer size={15} /> Print Summary
+          <button onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+            <Printer size={15} /> Print Daily Sales & Income
           </button>
           <button onClick={() => fetchReport()} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--accent)', border: 'none', borderRadius: 10, color: '#0F1612', cursor: 'pointer', fontSize: 13, fontWeight: 700, boxShadow: '0 2px 8px rgba(16,185,129,0.25)' }}>
             <RefreshCw size={15} /> Refresh

@@ -3,6 +3,8 @@ import { useSelector } from 'react-redux';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { TrendingUp, Package, RefreshCw, Loader, AlertTriangle, Printer, Search, FileText } from 'lucide-react';
+import { printDailySalesSummary } from '../utils/printDailySalesSummary';
+import FinancialSummaryReport from '../components/FinancialSummaryReport';
 
 const Card = ({ children, style = {} }) => (
   <div style={{ background: 'var(--bg-surface)', borderRadius: 14, border: '1px solid var(--border)', ...style }}>{children}</div>
@@ -523,29 +525,65 @@ export default function ReportsPage() {
   };
 
   const handlePrint = () => {
+    if (tab === 'daily' && dailyData) {
+      printDailySalesSummary({
+        pharmacy: dailyData.pharmacy || user?.pharmacy || {},
+        date_from: dailyDate,
+        date_to: dailyDate,
+        summary: {
+          total_revenue: dailyData.sales_summary?.total_sales || 0,
+          total_transactions: dailyData.sales_summary?.total_transactions || 0,
+          cash_total: dailyData.sales_summary?.cash || 0,
+          mpesa_total: dailyData.sales_summary?.mpesa || 0,
+          card_total: dailyData.sales_summary?.card || 0,
+          insurance_total: dailyData.sales_summary?.insurance || 0,
+        },
+        visits: dailyData.visits || [],
+        generated_by: user?.full_name || 'Staff In-Charge',
+        currency: 'KES'
+      });
+      return;
+    }
+
+    if (tab === 'sales' && salesReport) {
+      printDailySalesSummary({
+        pharmacy: user?.pharmacy || {},
+        date_from: startDate,
+        date_to: endDate,
+        summary: salesReport.summary || {},
+        top_products: salesReport.top_products || [],
+        cashier_performance: salesReport.cashier_performance || [],
+        generated_by: user?.full_name || 'Staff In-Charge',
+        currency: 'KES'
+      });
+      return;
+    }
+
     const content = printRef.current?.innerHTML;
     if (!content) return;
     const w = window.open('', '_blank');
-    w.document.write(`
-      <html><head><title>Print Report</title>
-      <style>
-        body { font-family: Arial, sans-serif; font-size: 12px; color: #000; margin: 20px; }
-        h1 { font-size: 18px; margin-bottom: 4px; }
-        h2 { font-size: 14px; margin: 16px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-        th { background: #f0f0f0; text-align: left; padding: 6px 8px; font-size: 11px; }
-        td { padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
-        .summary-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
-        .summary-box { border: 1px solid #ccc; padding: 10px; border-radius: 6px; }
-        .summary-box .val { font-size: 16px; font-weight: bold; margin-top: 4px; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; background: #e0f2e9; color: #2e7d32; }
-        @media print { @page { margin: 15mm; } }
-      </style></head><body>${content}</body></html>
-    `);
-    w.document.close();
-    w.focus();
-    setTimeout(() => { w.print(); w.close(); }, 500);
+    if (w) {
+      w.document.write(`
+        <html><head><title>Print Report</title>
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #000; margin: 20px; }
+          h1 { font-size: 18px; margin-bottom: 4px; }
+          h2 { font-size: 14px; margin: 16px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+          th { background: #f0f0f0; text-align: left; padding: 6px 8px; font-size: 11px; }
+          td { padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
+          .summary-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+          .summary-box { border: 1px solid #ccc; padding: 10px; border-radius: 6px; }
+          .summary-box .val { font-size: 16px; font-weight: bold; margin-top: 4px; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+          .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; background: #e0f2e9; color: #2e7d32; }
+          @media print { @page { margin: 15mm; } }
+        </style></head><body>${content}</body></html>
+      `);
+      w.document.close();
+      w.focus();
+      setTimeout(() => { w.print(); }, 500);
+    }
   };
 
   const maxMonthly = Math.max(...monthlyReport.map(m => parseFloat(m.total_revenue || 0)), 1);
@@ -558,9 +596,9 @@ export default function ReportsPage() {
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 3 }}>Analytics & insights</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {(tab === 'daily' || tab === 'history') && (
+          {(tab === 'daily' || tab === 'sales' || tab === 'history') && (
             <button onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'var(--accent)', border: 'none', borderRadius: 10, color: '#0F1612', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-              <Printer size={14} /> Print
+              <Printer size={14} /> Print {tab === 'daily' ? 'Daily Summary' : (tab === 'sales' ? 'Daily Sales & Income' : 'Report')}
             </button>
           )}
           <button onClick={() => { if (tab==='daily') fetchDailySummary(); else if (tab==='sales') fetchSales(); else if (tab==='monthly') fetchMonthly(); else if (tab==='stock') fetchStock(); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }}>
@@ -572,8 +610,9 @@ export default function ReportsPage() {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         <Tab label="📋 Daily Summary" active={tab==='daily'} onClick={() => setTab('daily')} />
-        <Tab label="🧬 Patient History" active={tab==='history'} onClick={() => setTab('history')} />
+        {!isLab && <Tab label="💰 Financial & Daily Income" active={tab==='finance'} onClick={() => setTab('finance')} />}
         {!isLab && <Tab label="📊 Sales Report" active={tab==='sales'} onClick={() => setTab('sales')} />}
+        <Tab label="🧬 Patient History" active={tab==='history'} onClick={() => setTab('history')} />
         {!isLab && <Tab label="📅 Monthly Trend" active={tab==='monthly'} onClick={() => setTab('monthly')} />}
         <Tab label="📦 Stock Alerts" active={tab==='stock'} onClick={() => setTab('stock')} />
         <Tab label="🏛 MOH National Reports" active={tab==='moh'} onClick={() => setTab('moh')} />
@@ -608,6 +647,11 @@ export default function ReportsPage() {
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Loader size={28} color="var(--accent)" style={{ animation: 'spin 0.8s linear infinite' }} /></div>
       ) : (
         <>
+          {/* ── FINANCIAL & DAILY INCOME REPORT ── */}
+          {tab === 'finance' && (
+            <FinancialSummaryReport embedded={true} />
+          )}
+
           {/* ── DAILY SUMMARY ── */}
           {tab === 'daily' && dailyData && (
             <div ref={printRef}>

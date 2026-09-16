@@ -3,6 +3,7 @@ import api from '../services/api';
 import toast from 'react-hot-toast';
 import { Search, Printer, Eye, X, Loader, ShoppingCart } from 'lucide-react';
 import { printReceipt } from '../utils/printReceipt';
+import { printDailySalesSummary } from '../utils/printDailySalesSummary';
 import { useSelector } from 'react-redux';
 
 const Modal = ({ title, onClose, children }) => (
@@ -73,16 +74,71 @@ export default function SalesPage() {
   );
 
   const totalRevenue = filtered.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
+  const [printingSummary, setPrintingSummary] = useState(false);
+
+  const handlePrintDailySummary = async () => {
+    setPrintingSummary(true);
+    try {
+      const [summaryRes, reportRes] = await Promise.all([
+        api.get(`/sales/summary/daily?date=${endDate || startDate || new Date().toISOString().split('T')[0]}`).catch(() => null),
+        api.get(`/reports/drug-sales?date_from=${startDate}&date_to=${endDate}`).catch(() => null)
+      ]);
+
+      const summaryData = summaryRes?.data?.data || {};
+      const reportData = reportRes?.data?.data || {};
+
+      const grossRevenue = parseFloat(summaryData.total_revenue || reportData.metrics?.total_revenue || totalRevenue || 0);
+      const grossCost = parseFloat(summaryData.total_cost || reportData.metrics?.total_cost || 0);
+      const grossProfit = parseFloat(summaryData.total_profit || reportData.metrics?.estimated_profit || (grossRevenue - grossCost) || 0);
+
+      printDailySalesSummary({
+        pharmacy: user?.pharmacy || {},
+        date_from: startDate,
+        date_to: endDate,
+        summary: {
+          total_revenue: grossRevenue,
+          total_transactions: summaryData.total_transactions || totalCount || filtered.length,
+          total_discounts: summaryData.total_discounts || 0,
+          cash_total: summaryData.cash_total || reportData.metrics?.cash_revenue || filtered.filter(s => s.payment_method === 'cash').reduce((sum, s) => sum + parseFloat(s.total || 0), 0),
+          mpesa_total: summaryData.mpesa_total || reportData.metrics?.mpesa_revenue || filtered.filter(s => s.payment_method === 'mpesa').reduce((sum, s) => sum + parseFloat(s.total || 0), 0),
+          card_total: summaryData.card_total || reportData.metrics?.card_revenue || filtered.filter(s => s.payment_method === 'card').reduce((sum, s) => sum + parseFloat(s.total || 0), 0),
+          insurance_total: summaryData.insurance_total || reportData.metrics?.insurance_revenue || filtered.filter(s => s.payment_method === 'insurance').reduce((sum, s) => sum + parseFloat(s.total || 0), 0),
+          total_cost: grossCost,
+          total_profit: grossProfit,
+        },
+        top_products: (reportData.items || []).slice(0, 20).map(item => ({
+          name: item.product_name,
+          generic_name: item.generic_name,
+          total_sold: item.total_quantity_sold,
+          total_revenue: item.total_revenue,
+          unit: 'units'
+        })),
+        generated_by: user?.full_name || 'Pharmacist In-Charge',
+        currency: 'KES'
+      });
+    } catch (err) {
+      toast.error('Failed to generate daily sales summary for printing');
+    } finally {
+      setPrintingSummary(false);
+    }
+  };
 
   return (
     <div style={{ padding: 24, height: '100vh', overflow: 'auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>Sales History</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 3 }}>
             {totalCount} transactions • Total: <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>KES {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </p>
         </div>
+        <button
+          onClick={handlePrintDailySummary}
+          disabled={printingSummary}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--accent)', border: 'none', borderRadius: 10, color: '#0F1612', fontSize: 13, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 8px rgba(16,185,129,0.25)' }}
+        >
+          <Printer size={15} /> {printingSummary ? 'Generating Report...' : 'Print Daily Sales & Income'}
+        </button>
       </div>
 
       {/* Filters */}

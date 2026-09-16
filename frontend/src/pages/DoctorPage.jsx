@@ -135,9 +135,11 @@ export default function DoctorPage() {
   const { user } = useSelector(s => s.auth);
   const [searchParams] = useSearchParams();
 
+  const todayStr = new Date().toISOString().split('T')[0];
   const [view, setView]         = useState(searchParams.get('tab') || 'queue');
   const [queueTab, setQueueTab] = useState('active');
-  const [queueDate, setQueueDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dateFrom, setDateFrom] = useState(todayStr);
+  const [dateTo, setDateTo]     = useState(todayStr);
   const [queue, setQueue]       = useState([]);
   const [search, setSearch]     = useState('');
   const [loading, setLoading]   = useState(true);
@@ -253,7 +255,7 @@ export default function DoctorPage() {
       }
       clearInterval(interval);
     };
-  }, [user?.pharmacy_id, queueTab, queueDate]);
+  }, [user?.pharmacy_id, queueTab, dateFrom, dateTo]);
 
   useEffect(() => {
     const tab = searchParams.get('tab') || 'queue';
@@ -337,10 +339,18 @@ export default function DoctorPage() {
   const fetchQueue = async () => {
     setLoading(true);
     try {
-      const d = queueDate || new Date().toISOString().split('T')[0];
-      const url = queueTab === 'active'
-        ? `/visits?status=opd_queue&date=${d}`
-        : `/visits?date=${d}`;
+      const params = new URLSearchParams();
+      if (queueTab === 'active') {
+        params.append('status', 'opd_queue');
+      }
+      if (dateFrom && dateTo && dateFrom === dateTo) {
+        params.append('date', dateFrom);
+      } else {
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+      }
+      const queryString = params.toString();
+      const url = `/visits${queryString ? `?${queryString}` : ''}`;
       const res = await api.get(url);
       setQueue(res.data.data || []);
     } catch { toast.error('Failed to load queue'); }
@@ -1252,12 +1262,38 @@ export default function DoctorPage() {
             placeholder="Search by name, patient number or phone..."
             style={{ width:'100%', padding:'10px 10px 10px 38px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none', boxSizing:'border-box' }}/>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="date" value={queueDate}
-            onChange={e => setQueueDate(e.target.value)}
-            style={{ padding:'10px 12px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10, color:'var(--text-primary)', fontSize:13, outline:'none' }}/>
-          {queueDate && (
-            <button onClick={() => setQueueDate('')} style={{ padding:'8px 12px', background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:8, color:'var(--text-muted)', fontSize:12, cursor:'pointer' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '4px 10px' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              style={{ padding: '6px 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none' }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '4px 10px' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              style={{ padding: '6px 4px', background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: 13, outline: 'none' }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); }}
+            style={{ padding: '8px 12px', background: dateFrom === todayStr && dateTo === todayStr ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${dateFrom === todayStr && dateTo === todayStr ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, color: dateFrom === todayStr && dateTo === todayStr ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+          >
+            Today
+          </button>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              style={{ padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+            >
               Clear
             </button>
           )}

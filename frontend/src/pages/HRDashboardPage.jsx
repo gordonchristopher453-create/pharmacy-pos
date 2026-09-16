@@ -50,9 +50,15 @@ export default function HRDashboardPage() {
         api.get('/finance/cashflow').catch(() => ({ data: { data: { inflows: 0, outflows: 0 } } })),
       ]);
 
-      const staffList = staffRes.data?.data || [];
-      const payrollList = payrollRes.data?.data || [];
-      const expensesList = expensesRes.data?.data || [];
+      const staffRaw = staffRes.data?.data;
+      const staffList = Array.isArray(staffRaw) ? staffRaw : (Array.isArray(staffRaw?.users) ? staffRaw.users : []);
+
+      const payrollRaw = payrollRes.data?.data;
+      const payrollList = Array.isArray(payrollRaw) ? payrollRaw : (Array.isArray(payrollRaw?.payroll) ? payrollRaw.payroll : []);
+
+      const expRaw = expensesRes.data?.data;
+      const expensesList = Array.isArray(expRaw) ? expRaw : (Array.isArray(expRaw?.expenses) ? expRaw.expenses : []);
+
       const cashData = cashRes.data?.data || {};
 
       setStaff(staffList);
@@ -380,12 +386,13 @@ export default function HRDashboardPage() {
 
 // Utility to safely map expense segments
 function EXPENSE_CATEGORIES_MAPPING(expenses, totalSalaries) {
-  const opExp = expenses.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
-  const total = totalSalaries + opExp;
-  if (total === 0) {
+  const expList = Array.isArray(expenses) ? expenses : (Array.isArray(expenses?.expenses) ? expenses.expenses : []);
+  const opExp = expList.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
+  const total = (parseFloat(totalSalaries) || 0) + opExp;
+  if (total <= 0) {
     return { salariesPct: 50, othersPct: 50 };
   }
-  const salariesPct = Math.round((totalSalaries / total) * 100);
+  const salariesPct = Math.min(100, Math.max(0, Math.round(((parseFloat(totalSalaries) || 0) / total) * 100)));
   const othersPct = 100 - salariesPct;
   return { salariesPct, othersPct };
 }
