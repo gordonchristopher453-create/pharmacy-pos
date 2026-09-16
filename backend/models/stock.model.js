@@ -1,18 +1,33 @@
 const { pool } = require('../config/db');
 
 class StockModel {
-  static async addStock({ product_id, quantity, batch_number, expiry_date, pharmacy_id }) {
-    const result = await pool.query(`
-      INSERT INTO stock (product_id, quantity, batch_number, expiry_date, pharmacy_id)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (product_id, pharmacy_id)
-      DO UPDATE SET
-        quantity = stock.quantity + EXCLUDED.quantity,
-        batch_number = COALESCE(EXCLUDED.batch_number, stock.batch_number),
-        expiry_date = COALESCE(EXCLUDED.expiry_date, stock.expiry_date),
-        updated_at = NOW()
-      RETURNING *
-    `, [product_id, quantity, batch_number, expiry_date, pharmacy_id]);
+  static async addStock({ product_id, quantity, batch_number, expiry_date, pharmacy_id, department = 'pharmacy' }) {
+    const qty = parseInt(quantity, 10) || 0;
+    const bNum = (batch_number && batch_number.trim() !== '') ? batch_number.trim() : null;
+    let result;
+    if (bNum) {
+      result = await pool.query(`
+        INSERT INTO stock (product_id, quantity, batch_number, expiry_date, pharmacy_id, department)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (pharmacy_id, product_id, batch_number)
+        DO UPDATE SET
+          quantity = stock.quantity + EXCLUDED.quantity,
+          expiry_date = COALESCE(EXCLUDED.expiry_date, stock.expiry_date),
+          updated_at = NOW()
+        RETURNING *
+      `, [product_id, qty, bNum, expiry_date || null, pharmacy_id, department]);
+    } else {
+      result = await pool.query(`
+        INSERT INTO stock (product_id, quantity, batch_number, expiry_date, pharmacy_id, department)
+        VALUES ($1, $2, NULL, $3, $4, $5)
+        ON CONFLICT (product_id, pharmacy_id) WHERE (batch_number IS NULL)
+        DO UPDATE SET
+          quantity = stock.quantity + EXCLUDED.quantity,
+          expiry_date = COALESCE(EXCLUDED.expiry_date, stock.expiry_date),
+          updated_at = NOW()
+        RETURNING *
+      `, [product_id, qty, expiry_date || null, pharmacy_id, department]);
+    }
     return result.rows[0];
   }
 

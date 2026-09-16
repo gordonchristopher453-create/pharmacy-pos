@@ -439,21 +439,24 @@ export default function StockPage() {
         }]
       }));
     } else {
-      if (!newProductForm.name.trim()) { alert('Product name is required'); return; }
-      if (!newProductForm.selling_price || parseFloat(newProductForm.selling_price) < 0) { alert('Enter a valid selling price'); return; }
-      if (!newProductForm.quantity_ordered || parseFloat(newProductForm.quantity_ordered) <= 0) { alert('Enter a valid quantity'); return; }
+      if (!newProductForm.name?.trim()) { toast.error('Product name is required'); return; }
+      if (!newProductForm.selling_price || parseFloat(newProductForm.selling_price) < 0) { toast.error('Enter a valid selling price'); return; }
+      if (!newProductForm.quantity_ordered || parseFloat(newProductForm.quantity_ordered) <= 0) { toast.error('Enter a valid quantity'); return; }
       try {
         const res = await api.post('/products', {
-          name: newProductForm.name,
-          generic_name: newProductForm.generic_name,
+          name: newProductForm.name.trim(),
+          generic_name: newProductForm.generic_name?.trim() || null,
+          barcode: newProductForm.barcode?.trim() || null,
           category_id: newProductForm.category_id || null,
-          unit: newProductForm.unit,
+          supplier_id: newProductForm.supplier_id || null,
+          unit: newProductForm.unit || 'tablet',
           selling_price: parseFloat(newProductForm.selling_price),
           min_selling_price: parseFloat(newProductForm.min_selling_price) || 0,
           max_selling_price: parseFloat(newProductForm.max_selling_price) || 0,
-          reorder_level: parseInt(newProductForm.reorder_level) || 10,
-          requires_prescription: newProductForm.requires_prescription,
-          buying_price: parseFloat(newProductForm.unit_cost) || 0
+          reorder_level: parseInt(newProductForm.reorder_level, 10) || 10,
+          requires_prescription: Boolean(newProductForm.requires_prescription),
+          buying_price: parseFloat(newProductForm.unit_cost) || 0,
+          department: isLab ? 'lab' : 'pharmacy'
         });
         const created = res.data.data;
         setReceiveForm(prev => ({
@@ -468,9 +471,10 @@ export default function StockPage() {
             expiry_date: newProductForm.expiry_date
           }]
         }));
+        toast.success(`Product "${created.name}" created successfully`);
         fetchStock();
       } catch (err) {
-        alert(err.response?.data?.message || 'Failed to create product');
+        toast.error(err.response?.data?.message || 'Failed to create product');
         return;
       }
     }

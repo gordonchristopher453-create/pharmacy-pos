@@ -47,10 +47,20 @@ const createProduct = async (req, res) => {
     logger.info(`Creating product: ${JSON.stringify(req.body)} pharmacy_id: ${req.pharmacy_id}`);
     const product = await ProductModel.create({ ...req.body, pharmacy_id: req.pharmacy_id });
     logger.info(`Product created: ${product.name}`);
-    return successResponse(res, 201, 'Product created', product);
+    return successResponse(res, 201, 'Product created successfully', product);
   } catch (error) {
     logger.error('Create product error:', error.message, error.stack);
-    if (error.code === '23505') return errorResponse(res, 400, 'Barcode already exists');
+    if (error.code === '23505') {
+      const constraint = (error.constraint || '').toLowerCase();
+      const detail = (error.detail || '').toLowerCase();
+      if (constraint.includes('barcode') || detail.includes('barcode')) {
+        return errorResponse(res, 400, `Barcode "${req.body.barcode || ''}" already exists in this facility.`);
+      }
+      if (constraint.includes('name') || detail.includes('name')) {
+        return errorResponse(res, 400, `A product named "${req.body.name || ''}" already exists in this facility.`);
+      }
+      return errorResponse(res, 400, 'A product with matching details already exists in this facility.');
+    }
     return errorResponse(res, 500, 'Failed to create product: ' + error.message);
   }
 };
@@ -59,10 +69,21 @@ const updateProduct = async (req, res) => {
   try {
     const product = await ProductModel.update(req.params.id, req.pharmacy_id, req.body);
     if (!product) return errorResponse(res, 404, 'Product not found');
-    return successResponse(res, 200, 'Product updated', product);
+    return successResponse(res, 200, 'Product updated successfully', product);
   } catch (error) {
     logger.error('Update product error:', error.message);
-    return errorResponse(res, 500, 'Failed to update product');
+    if (error.code === '23505') {
+      const constraint = (error.constraint || '').toLowerCase();
+      const detail = (error.detail || '').toLowerCase();
+      if (constraint.includes('barcode') || detail.includes('barcode')) {
+        return errorResponse(res, 400, `Barcode "${req.body.barcode || ''}" already exists in this facility.`);
+      }
+      if (constraint.includes('name') || detail.includes('name')) {
+        return errorResponse(res, 400, `A product named "${req.body.name || ''}" already exists in this facility.`);
+      }
+      return errorResponse(res, 400, 'A product with matching details already exists in this facility.');
+    }
+    return errorResponse(res, 500, 'Failed to update product: ' + error.message);
   }
 };
 
@@ -85,20 +106,25 @@ const addStock = async (req, res) => {
     if (!product) return errorResponse(res, 404, 'Product not found');
 
     const stock = await StockModel.addStock({
-      product_id, quantity, batch_number, expiry_date,
-      pharmacy_id: req.pharmacy_id
+      product_id,
+      quantity: parseInt(quantity, 10),
+      batch_number: batch_number || null,
+      expiry_date: expiry_date || null,
+      pharmacy_id: req.pharmacy_id,
+      department: product.department || 'pharmacy'
     });
     await StockModel.logMovement({
       product_id, user_id: req.user.id,
-      movement_type: 'purchase', quantity,
-      reference_id: stock.id,
+      movement_type: 'purchase',
+      quantity: parseInt(quantity, 10),
+      reference_id: stock?.id || null,
       notes: `Stock added. Batch: ${batch_number || 'N/A'}`,
       pharmacy_id: req.pharmacy_id
     });
-    return successResponse(res, 201, 'Stock added', stock);
+    return successResponse(res, 201, 'Stock added successfully', stock);
   } catch (error) {
     logger.error('Add stock error:', error.message);
-    return errorResponse(res, 500, 'Failed to add stock');
+    return errorResponse(res, 500, 'Failed to add stock: ' + error.message);
   }
 };
 

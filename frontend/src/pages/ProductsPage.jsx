@@ -91,7 +91,8 @@ export default function ProductsPage() {
   const closeModal = () => { setModal(null); setSelected(null); setDeleteConfirm(null); };
 
   const handleSave = async () => {
-    if (!form.name || !form.selling_price) return toast.error('Name and selling price are required');
+    if (!form.name?.trim()) return toast.error('Product name is required');
+    if (!form.selling_price || parseFloat(form.selling_price) < 0) return toast.error('Valid selling price is required');
     const min = parseFloat(form.min_selling_price || 0);
     const max = parseFloat(form.max_selling_price || 0);
     const price = parseFloat(form.selling_price);
@@ -100,17 +101,36 @@ export default function ProductsPage() {
     if (max > 0 && price > max) return toast.error('Selling price cannot exceed maximum');
     setSaving(true);
     try {
+      const payload = {
+        name: form.name.trim(),
+        generic_name: form.generic_name?.trim() || null,
+        barcode: form.barcode?.trim() || null,
+        category_id: form.category_id || null,
+        supplier_id: form.supplier_id || null,
+        unit: form.unit || 'tablet',
+        selling_price: parseFloat(form.selling_price),
+        buying_price: parseFloat(form.buying_price || 0),
+        min_selling_price: parseFloat(form.min_selling_price || 0),
+        max_selling_price: parseFloat(form.max_selling_price || 0),
+        reorder_level: parseInt(form.reorder_level || 10, 10),
+        requires_prescription: Boolean(form.requires_prescription),
+        department: user?.role === 'lab_technician' ? 'lab' : (form.department || 'pharmacy')
+      };
+
       if (modal === 'add') {
-        await api.post('/products', { ...form, department: user?.role === 'lab_technician' ? 'lab' : 'pharmacy' });
+        await api.post('/products', payload);
         toast.success('Product created successfully');
       } else {
-        await api.put(`/products/${selected.id}`, form);
+        await api.put(`/products/${selected.id}`, payload);
         toast.success('Product updated successfully');
       }
       closeModal();
       fetchAll();
-    } catch (e) { toast.error(e.response?.data?.message || 'Failed to save'); }
-    finally { setSaving(false); }
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to save product');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async (id) => {

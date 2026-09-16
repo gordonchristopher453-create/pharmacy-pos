@@ -260,16 +260,30 @@ router.post('/bulk-import', async (req, res) => {
             parseFloat(item.buying_price)||0, parseFloat(item.selling_price)||0, item.unit||'pcs'
           ]);
           const productId = pRes.rows[0].id;
-          await pool.query(`
-            INSERT INTO stock (pharmacy_id, product_id, quantity, expiry_date)
-            VALUES ($1,$2,$3,$4)
-            ON CONFLICT (pharmacy_id, product_id) DO UPDATE
-            SET quantity = stock.quantity + EXCLUDED.quantity
-          `, [
-            req.pharmacy_id, productId,
-            parseInt(item.quantity)||0,
-            item.expiry_date||null
-          ]);
+          if (item.batch_number) {
+            await pool.query(`
+              INSERT INTO stock (pharmacy_id, product_id, quantity, batch_number, expiry_date)
+              VALUES ($1,$2,$3,$4,$5)
+              ON CONFLICT (pharmacy_id, product_id, batch_number) DO UPDATE
+              SET quantity = stock.quantity + EXCLUDED.quantity
+            `, [
+              req.pharmacy_id, productId,
+              parseInt(item.quantity)||0,
+              item.batch_number,
+              item.expiry_date||null
+            ]);
+          } else {
+            await pool.query(`
+              INSERT INTO stock (pharmacy_id, product_id, quantity, expiry_date)
+              VALUES ($1,$2,$3,$4)
+              ON CONFLICT (product_id, pharmacy_id) WHERE (batch_number IS NULL) DO UPDATE
+              SET quantity = stock.quantity + EXCLUDED.quantity
+            `, [
+              req.pharmacy_id, productId,
+              parseInt(item.quantity)||0,
+              item.expiry_date||null
+            ]);
+          }
           imported++;
         }
       }

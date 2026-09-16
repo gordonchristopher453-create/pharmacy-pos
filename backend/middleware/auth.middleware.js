@@ -50,9 +50,14 @@ const authorize = (...roles) => {
   return (req, res, next) => {
     if (req.user.is_super_admin || req.user.role === 'super_admin') return next();
     const userRole = req.user.role;
+    const perms = req.user.permissions || [];
     const isAllowed = roles.includes(userRole) ||
       (roles.includes('facility_admin') && userRole === 'admin') ||
-      (roles.includes('admin') && userRole === 'facility_admin');
+      (roles.includes('admin') && userRole === 'facility_admin') ||
+      perms.includes('*') ||
+      perms.includes('can_manage_pharmacy') ||
+      perms.includes('can_manage_stock') ||
+      perms.includes('can_manage_inventory');
     if (!isAllowed) {
       return res.status(403).json({ success: false, message: `Role '${userRole}' is not authorized.` });
     }
