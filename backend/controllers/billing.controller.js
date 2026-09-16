@@ -98,30 +98,39 @@ const getDailySummary = async (req, res) => {
     const summary = await pool.query(`
       SELECT
         COUNT(*)                                                        AS total_items,
-        COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')) AS paid_count,
+        COUNT(*) FILTER (WHERE status = 'paid')                         AS paid_count,
+        COUNT(*) FILTER (WHERE status IN ('insurance', 'nhif', 'sha', 'corporate') OR LOWER(COALESCE(payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate')) AS insurance_count,
         COUNT(*) FILTER (WHERE status='pending')                        AS pending_count,
         COUNT(*) FILTER (WHERE status='waived')                         AS waived_count,
         COALESCE(SUM(total_price),0)                                    AS total_billed,
+        COALESCE(SUM(total_price) FILTER (WHERE status = 'paid' AND LOWER(COALESCE(payment_method,'cash')) NOT IN ('insurance', 'nhif', 'sha', 'corporate')),0) AS total_cash_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance', 'nhif', 'sha', 'corporate') OR LOWER(COALESCE(payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate')),0) AS total_insurance_claims,
         COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS total_collected,
         COALESCE(SUM(total_price) FILTER (WHERE status='pending'),0)    AS total_pending,
         COALESCE(SUM(total_price) FILTER (WHERE status='waived'),0)     AS total_waived,
-        COALESCE(SUM(total_price) FILTER (WHERE payment_method='cash' AND status='paid'),0) AS cash_collected,
-        COALESCE(SUM(total_price) FILTER (WHERE payment_method='mpesa' AND status='paid'),0) AS mpesa_collected,
-        COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance','nhif','sha') OR payment_method IN ('insurance','nhif','sha')),0) AS insurance_collected,
-        COALESCE(SUM(total_price) FILTER (WHERE payment_method='bank' AND status='paid'),0) AS bank_collected,
-        COALESCE(SUM(total_price) FILTER (WHERE payment_method='corporate'),0) AS corporate_collected
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,'cash'))='cash' AND status='paid'),0) AS cash_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,''))='mpesa' AND status='paid'),0) AS mpesa_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance','nhif','sha') OR LOWER(COALESCE(payment_method,'')) IN ('insurance','nhif','sha')),0) AS insurance_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,'')) IN ('bank','card','cheque') AND status='paid'),0) AS bank_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,''))='corporate' OR status='corporate'),0) AS corporate_collected
       FROM billing_items
       WHERE facility_id=$1 AND DATE(created_at)=$2
     `, [pid, targetDate]);
 
     const byMethod = await pool.query(`
       SELECT 
-        COALESCE(payment_method, 'cash') AS payment_method,
+        CASE 
+          WHEN status IN ('insurance', 'nhif', 'sha') OR LOWER(COALESCE(payment_method,'')) IN ('insurance', 'nhif', 'sha') THEN 'insurance'
+          WHEN status = 'corporate' OR LOWER(COALESCE(payment_method,'')) = 'corporate' THEN 'corporate'
+          WHEN LOWER(COALESCE(payment_method,'')) = 'mpesa' THEN 'mpesa'
+          WHEN LOWER(COALESCE(payment_method,'')) IN ('bank', 'card', 'cheque') THEN 'bank'
+          ELSE 'cash'
+        END AS payment_method,
         COUNT(*) AS count,
         COALESCE(SUM(total_price), 0) AS amount
       FROM billing_items
       WHERE facility_id=$1 AND DATE(created_at)=$2 AND status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')
-      GROUP BY COALESCE(payment_method, 'cash')
+      GROUP BY 1
       ORDER BY amount DESC
     `, [pid, targetDate]);
 
@@ -174,7 +183,7 @@ const payBillingItem = async (req, res) => {
       await pool.query(`
         UPDATE visits
         SET fee_paid = true, payment_method = $1, updated_at = NOW()
-        WHERE id = $2 AND pharmacy_id = $3
+        WHERE id = $2 AND (pharmacy_id = $3 OR pharmacy_id IS NULL)
       `, [payment_method || 'cash', result.rows[0].visit_id, req.pharmacy_id]);
     }
 
@@ -198,9 +207,9 @@ const payVisitBill = async (req, res) => {
       insurance_provider, member_number, auth_code, copay_amount 
     } = req.body;
     const vid = visit_id || req.params.visit_id;
-    const pMethod = payment_method || 'cash';
-    const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod) || !!insurance_provider;
-    const statusToSet = isInsuranceMethod ? (pMethod === 'cash' ? 'insurance' : pMethod) : 'paid';
+    const pMethod = (payment_method || 'cash').toLowerCase().trim();
+    const isInsuranceMethod = ['insurance', 'nhif', 'sha', 'corporate'].includes(pMethod);
+    const statusToSet = isInsuranceMethod ? pMethod : 'paid';
 
     // Ensure paid_amount, reference_number, insurance_provider, member_number, auth_code, copay_amount exist
     try {

@@ -667,7 +667,7 @@ router.put('/:id/status', async (req, res) => {
     const { status } = req.body;
     if (status !== 'pending' && status !== 'cancelled') {
       const lab = await pool.query(`
-        SELECT lr.visit_id, lr.test_name, v.status as visit_status, v.visit_type,
+        SELECT lr.visit_id, lr.test_name, v.status as visit_status, v.visit_type, v.payment_method as visit_payment_method,
                EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = lr.visit_id::text AND ia.status = 'admitted') as is_admitted
         FROM lab_requests lr
         LEFT JOIN visits v ON lr.visit_id::text = v.id::text
@@ -676,14 +676,15 @@ router.put('/:id/status', async (req, res) => {
       if (lab.rows.length === 0) {
         return errorResponse(res, 404, 'Lab request not found');
       }
-      const { visit_id, test_name, visit_status, visit_type, is_admitted } = lab.rows[0];
+      const { visit_id, test_name, visit_status, visit_type, is_admitted, visit_payment_method } = lab.rows[0];
 
       const isInpatient = visit_status === 'inpatient' ||
                           (visit_type && visit_type.toLowerCase() === 'inpatient') ||
                           is_admitted;
+      const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes((visit_payment_method || '').toLowerCase().trim());
 
-      // Inpatients do not require upfront payment clearance for lab processing
-      if (!isInpatient) {
+      // Inpatients and Insurance/SHA clients do not require upfront cash clearance for lab processing
+      if (!isInpatient && !isInsurance) {
         const billCheck = await pool.query(`
           SELECT status FROM billing_items
           WHERE visit_id::text = $1::text AND (facility_id::text = $2::text OR facility_id IS NULL) AND item_type = 'laboratory'
@@ -712,21 +713,23 @@ router.put('/:id/result', async (req, res) => {
     const { result, result_value, result_unit, reference_range, result_flag, technician_notes } = req.body;
     // ── payment check & inpatient detection ──────────────────
     const labReq = await pool.query(`
-      SELECT lr.visit_id, lr.test_name, v.status as visit_status, v.visit_type,
+      SELECT lr.visit_id, lr.test_name, v.status as visit_status, v.visit_type, v.payment_method as visit_payment_method,
              EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = lr.visit_id::text AND ia.status = 'admitted') as is_admitted
       FROM lab_requests lr
       LEFT JOIN visits v ON lr.visit_id::text = v.id::text
       WHERE lr.id::text = $1::text AND (lr.pharmacy_id::text = $2::text OR lr.pharmacy_id IS NULL)
     `, [req.params.id, req.pharmacy_id]);
     if (!labReq.rows[0]) return errorResponse(res, 404, 'Lab request not found');
-    const { visit_id, test_name, visit_status, visit_type, is_admitted } = labReq.rows[0];
+    const { visit_id, test_name, visit_status, visit_type, is_admitted, visit_payment_method } = labReq.rows[0];
 
     const isInpatient = visit_status === 'inpatient' ||
                         (visit_type && visit_type.toLowerCase() === 'inpatient') ||
                         is_admitted;
 
-    // Check payment only for OPD visits
-    if (!isInpatient) {
+    const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes((visit_payment_method || '').toLowerCase().trim());
+
+    // Check payment only for OPD cash visits
+    if (!isInpatient && !isInsurance) {
       const payCheck = await pool.query(`
         SELECT status FROM billing_items
         WHERE visit_id::text = $1::text AND (facility_id::text = $2::text OR facility_id IS NULL) AND item_type = 'laboratory'
@@ -749,17 +752,23 @@ router.put('/:id/result', async (req, res) => {
         result_flag||null, technician_notes||null, req.user.id, req.params.id, req.pharmacy_id]);
     if (!res2.rows[0]) return errorResponse(res, 404, 'Lab request not found');
 
-    // For OPD, return visit to doctor. For inpatient, preserve inpatient status!
+    // For OPD, return visit to doctor UNLESS patient still has pending injection orders!
     if (!isInpatient) {
+      const pendingInj = await pool.query(
+        `SELECT 1 FROM injection_room_orders WHERE visit_id::text = $1::text AND LOWER(COALESCE(status, 'pending')) = 'pending' LIMIT 1`,
+        [res2.rows[0].visit_id]
+      );
+      const nextStatus = pendingInj.rows.length > 0 ? 'injection_room' : 'with_doctor';
+
       await pool.query(`
-        UPDATE visits SET status='with_doctor', updated_at=NOW()
-        WHERE id::text=$1::text AND (pharmacy_id::text=$2::text OR pharmacy_id IS NULL) AND UPPER(status) IN ('LAB', 'WITH_LAB', 'WAITING_LAB', 'WITH_DOCTOR', 'RADIOLOGY', 'WAITING_RADIOLOGY')
-      `, [res2.rows[0].visit_id, req.pharmacy_id]);
+        UPDATE visits SET status=$1, updated_at=NOW()
+        WHERE id::text=$2::text AND (pharmacy_id::text=$3::text OR pharmacy_id IS NULL) AND UPPER(status) IN ('LAB', 'WITH_LAB', 'WAITING_LAB', 'WITH_DOCTOR', 'RADIOLOGY', 'WAITING_RADIOLOGY', 'INJECTION_ROOM', 'WAITING_INJECTION')
+      `, [nextStatus, res2.rows[0].visit_id, req.pharmacy_id]);
 
       const io = req.app.get('io');
       if (io) {
-        io.emit(`queue_update_${req.pharmacy_id}`, { visit_id: res2.rows[0].visit_id, status: 'with_doctor' });
-        io.emit(`visit_updated_${req.pharmacy_id}`, { visit_id: res2.rows[0].visit_id, status: 'with_doctor' });
+        io.emit(`queue_update_${req.pharmacy_id}`, { visit_id: res2.rows[0].visit_id, status: nextStatus });
+        io.emit(`visit_updated_${req.pharmacy_id}`, { visit_id: res2.rows[0].visit_id, status: nextStatus });
       }
     }
 

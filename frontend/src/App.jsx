@@ -70,7 +70,9 @@ const ProtectedRoute = ({ children, roles }) => {
 const getDefaultRoute = (role) => {
   switch(role) {
     case 'super_admin': return '/app/super-admin';
-    case 'facility_admin': return '/app/billing';
+    case 'facility_admin':
+    case 'admin': return '/app/dashboard';
+    case 'hr': return '/app/department/hr';
     case 'doctor': return '/app/doctor';
     case 'lab_technician': return '/app/lab';
     case 'nurse': return '/app/triage';
@@ -140,9 +142,10 @@ export default function App() {
           <Route index element={<ErrorBoundary><DefaultRedirect /></ErrorBoundary>} />
 
           <Route path="super-admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
-          <Route path="dashboard" element={<ProtectedRoute roles={['facility_admin']}><DashboardPage /></ProtectedRoute>} />
+          <Route path="dashboard" element={<ProtectedRoute roles={['facility_admin', 'admin', 'hr', 'accountant', 'sha_officer']}><DashboardPage /></ProtectedRoute>} />
+          <Route path="hr" element={<ProtectedRoute roles={['facility_admin', 'admin', 'hr', 'accountant']}><ErrorBoundary><HRDashboardPage /></ErrorBoundary></ProtectedRoute>} />
 
-          <Route path="department/:dept" element={<ProtectedRoute roles={['facility_admin']}><DepartmentPage /></ProtectedRoute>}>
+          <Route path="department/:dept" element={<ProtectedRoute roles={['facility_admin', 'admin', 'hr', 'accountant']}><DepartmentPage /></ProtectedRoute>}>
             <Route index element={<ErrorBoundary><DeptIndex /></ErrorBoundary>} />
             <Route path="patients"  element={<ErrorBoundary><PatientsPage /></ErrorBoundary>} />
             <Route path="stock"     element={<ErrorBoundary><StockPage /></ErrorBoundary>} />

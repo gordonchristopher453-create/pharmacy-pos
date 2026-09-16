@@ -544,18 +544,27 @@ export default function POSPage() {
     try {
       const today = new Date().toISOString().split('T')[0];
       const res = await api.get(`/consultations/pharmacy-queue?date_from=${today}&date_to=${today}`);
-      setRxQueue(res.data.data || []);
+      let data = res.data.data || [];
+      // If none found for today, check for any pending prescriptions
+      if (data.length === 0) {
+        const allRes = await api.get('/consultations/pharmacy-queue?all_dates=true');
+        data = (allRes.data.data || []).filter(item => (item.prescriptions || []).some(p => p.status === 'pending' || !p.status));
+      }
+      setRxQueue(data);
     } catch {}
     finally { setRxLoading(false); }
   }, []);
 
   useEffect(() => {
     fetchRxQueue();
-    const interval = setInterval(fetchRxQueue, 20000);
+    const interval = setInterval(fetchRxQueue, 15000);
     return () => clearInterval(interval);
   }, [fetchRxQueue]);
 
-  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, fetchHistory]);
+  useEffect(() => { 
+    if (tab === 'rx_queue') fetchRxQueue();
+    if (tab === 'history') fetchHistory(); 
+  }, [tab, fetchRxQueue, fetchHistory]);
 
   const handleReprint = useCallback(async (saleId) => {
     try {

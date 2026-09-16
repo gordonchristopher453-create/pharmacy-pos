@@ -1024,7 +1024,8 @@ export default function LabPage() {
     const vid = visitId || selected?.visit_id;
     const tName = testName || selected?.test_name;
     const isReqInpatient = activeTab === 'inpatient' || selected?.visit_type === 'inpatient' || selected?.visit_status === 'inpatient' || selected?.patient_type === 'inpatient' || selected?.notes?.toLowerCase()?.includes('inpatient') || selected?.notes?.toLowerCase()?.includes('ward');
-    if (status === "processing" && vid && tName && !isReqInpatient) {
+    const isReqInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes((selected?.payment_method || '').toLowerCase().trim());
+    if (status === "processing" && vid && tName && !isReqInpatient && !isReqInsurance) {
       try {
         const billRes = await api.get(`/billing/visit/${vid}`);
         const items = billRes.data?.data?.items || [];
@@ -1125,9 +1126,10 @@ export default function LabPage() {
   const handleSubmitResult = async () => {
     const payload = buildResultPayload();
     if (!payload.result && !payload.result_value) { toast.error('Please enter the result'); return; }
-    // payment check before submitting (bypassed for inpatients)
+    // payment check before submitting (bypassed for inpatients and insurance)
     const isReqInpatient = activeTab === 'inpatient' || selected?.visit_type === 'inpatient' || selected?.visit_status === 'inpatient' || selected?.patient_type === 'inpatient' || selected?.notes?.toLowerCase()?.includes('inpatient') || selected?.notes?.toLowerCase()?.includes('ward');
-    if (!isReqInpatient) {
+    const isReqInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes((selected?.payment_method || '').toLowerCase().trim());
+    if (!isReqInpatient && !isReqInsurance) {
       try {
         const billRes = await api.get(`/billing/visit/${selected.visit_id}`);
         const items = billRes.data?.data?.items || [];
@@ -1523,10 +1525,11 @@ export default function LabPage() {
                 const billItems = billData.items || [];
                 const testBill = billItems.find(i => i.item_type === 'laboratory' && i.item_name?.trim().toLowerCase() === req.test_name?.trim().toLowerCase());
                 const isInpatient = req.is_inpatient || req.ward_name || req.visit_type === 'inpatient' || req.visit_status === 'inpatient';
-                const isPaid = !testBill || testBill.status !== 'pending';
-                const isCleared = isPaid || isInpatient;
+                const isInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes((req.payment_method || '').toLowerCase().trim());
+                const isPaid = !testBill || testBill.status !== 'pending' || isInsurance;
+                const isCleared = isPaid || isInpatient || isInsurance;
                 const testPrice = testBill ? parseFloat(testBill.total_price || 0) : 0;
-                const payBorderColor = isInpatient ? '#3b82f6' : (!testBill ? 'var(--border)' : isPaid ? '#10b981' : '#ef4444');
+                const payBorderColor = isInpatient ? '#3b82f6' : (isInsurance ? '#8b5cf6' : (!testBill ? 'var(--border)' : isPaid ? '#10b981' : '#ef4444'));
                 const flagColor = FLAG_COLORS[req.result_flag || 'normal'];
                 const flagLabel = FLAG_LABELS[req.result_flag || 'normal'];
 
@@ -1588,8 +1591,8 @@ export default function LabPage() {
                         <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6, flexShrink:0 }}>
                           <span style={{ fontSize:11, padding:'4px 10px', borderRadius:20, fontWeight:700, background:`${stColor}20`, color:stColor }}>{stLabel}</span>
                           {req.status !== 'completed' ? (
-                            <span style={{ fontSize:10, padding:'3px 8px', borderRadius:20, fontWeight:700, background: isInpatient ? '#3b82f620' : (isPaid ? '#10b98120' : '#ef444420'), color: isInpatient ? '#3b82f6' : (isPaid ? '#10b981' : '#ef4444') }}>
-                              {isInpatient ? '🏥 Inpatient Account' : (isPaid ? '✅ Paid' : `❌ Unpaid KES ${testPrice.toLocaleString()}`)}
+                            <span style={{ fontSize:10, padding:'3px 8px', borderRadius:20, fontWeight:700, background: isInpatient ? '#3b82f620' : (isInsurance ? '#8b5cf620' : (isPaid ? '#10b98120' : '#ef444420')), color: isInpatient ? '#3b82f6' : (isInsurance ? '#8b5cf6' : (isPaid ? '#10b981' : '#ef4444')) }}>
+                              {isInpatient ? '🏥 Inpatient Account' : (isInsurance ? '🛡️ SHA / Insurance' : (isPaid ? '✅ Paid' : `❌ Unpaid KES ${testPrice.toLocaleString()}`))}
                             </span>
                           ) : (
                             <span style={{ fontSize:10, padding:'3px 8px', borderRadius:20, fontWeight:700, background:'#10b98120', color:'#10b981' }}>

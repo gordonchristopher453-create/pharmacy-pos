@@ -556,7 +556,7 @@ export default function DoctorPage() {
     const primaryDx = diagnoses.find(d => d.name?.trim()) || {};
     return {
       visit_id:   selectedVisit.id,
-      patient_id: patient.id,
+      patient_id: patient?.id || selectedVisit?.patient_id,
       ...notes,
       diagnosis:     primaryDx.name || '',
       icd_code:      primaryDx.code || '',
@@ -584,7 +584,7 @@ export default function DoctorPage() {
       }
       if (sendToPharmacy) {
         // Status update first — must succeed before billing
-        await api.put(`/patients/visits/${selectedVisit.id}/status`, { status: 'WAITING_PHARMACY' });
+        await api.put(`/patients/visits/${selectedVisit.id}/status`, { status: 'pharmacy' });
         // Billing is non-blocking
         const drugItems = drugs.filter(d=>d.drug_name?.trim()).map(d=>({
           item_type:'drug',
@@ -592,10 +592,10 @@ export default function DoctorPage() {
           quantity: d.quantity||1, unit_price: d.selling_price||0, reference_id: d.product_id||null
         }));
         if (drugItems.length) addToBill(drugItems).catch(()=>{});
-        toast.success('Sent to Pharmacy!');
+        toast.success('Prescriptions sent to Pharmacy!');
         resetToQueue();
       } else {
-        await api.put(`/patients/visits/${selectedVisit.id}/status`, { status: 'CONSULTATION_PAUSED' }).catch(()=>{});
+        await api.put(`/patients/visits/${selectedVisit.id}/status`, { status: 'with_doctor' }).catch(()=>{});
         toast.success('Consultation saved');
       }
     } catch (e) { toast.error(e.response?.data?.message || 'Failed to save'); }
@@ -887,7 +887,9 @@ export default function DoctorPage() {
   const referToExternalHospital = async () => {
     if (!selectedVisit) return;
     ensureDiagnosis();
-    if (!window.confirm('Refer this patient to an external hospital? A treatment summary document will be generated.')) return;
+    try {
+      if (typeof window !== 'undefined' && window.confirm && !window.confirm('Refer this patient to an external hospital? A treatment summary document will be generated.')) return;
+    } catch(e) {}
     setSaving(true);
     const visitToRefer = selectedVisit;
     try {
@@ -905,13 +907,24 @@ export default function DoctorPage() {
 
   const discharge = async () => {
     ensureDiagnosis();
-    if (!window.confirm('Discharge this patient?')) return;
+    const hasPrescriptions = drugs.some(d => d.drug_name?.trim());
+    const confirmMsg = hasPrescriptions
+      ? 'Discharge patient and dispatch prescriptions to Pharmacy for dispensing?'
+      : 'Discharge this patient?';
+    try {
+      if (typeof window !== 'undefined' && window.confirm && !window.confirm(confirmMsg)) return;
+    } catch(e) {}
     setSaving(true);
     const visitToDischarge = selectedVisit;
     try {
-      await saveConsultation(false);
-      await api.put(`/patients/visits/${visitToDischarge.id}/status`, { status:'COMPLETED' });
-      toast.success('Patient discharged');
+      if (hasPrescriptions) {
+        await saveConsultation(true);
+        toast.success('Patient discharged and prescriptions sent to Pharmacy');
+      } else {
+        await saveConsultation(false);
+        await api.put(`/patients/visits/${visitToDischarge.id}/status`, { status:'completed' });
+        toast.success('Patient discharged');
+      }
       await triggerAutoTreatmentSummary(visitToDischarge);
       resetToQueue();
     } catch { toast.error('Failed to discharge'); }

@@ -512,14 +512,19 @@ router.get('/summary', protect, async (req, res) => {
     const result = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status='pending')   AS pending_count,
-        COUNT(*) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha')) AS paid_count,
+        COUNT(*) FILTER (WHERE status = 'paid')    AS paid_count,
+        COUNT(*) FILTER (WHERE status IN ('insurance', 'nhif', 'sha', 'corporate') OR LOWER(COALESCE(payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate')) AS insurance_count,
         COALESCE(SUM(total_price) FILTER (WHERE status='pending'),0) AS pending_total,
-        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha')),0) AS collected_total,
+        COALESCE(SUM(total_price) FILTER (WHERE status='paid' AND LOWER(COALESCE(payment_method,'cash')) NOT IN ('insurance', 'nhif', 'sha', 'corporate')),0) AS cash_collected_total,
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,'cash'))='cash' AND status='paid'),0) AS cash_amount,
+        COALESCE(SUM(total_price) FILTER (WHERE LOWER(COALESCE(payment_method,''))='mpesa' AND status='paid'),0) AS mpesa_amount,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('insurance', 'nhif', 'sha', 'corporate') OR LOWER(COALESCE(payment_method,'')) IN ('insurance', 'nhif', 'sha', 'corporate')),0) AS insurance_total,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS collected_total,
         COALESCE(SUM(total_price),0)                                AS total_billed,
-        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha')),0) AS total_collected,
+        COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) AS total_collected,
         COALESCE(SUM(total_price) FILTER (WHERE status='pending'),0) AS total_outstanding,
         CASE WHEN COALESCE(SUM(total_price),0) > 0
-          THEN ROUND((COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha')),0) / COALESCE(SUM(total_price),0)) * 100, 1)
+          THEN ROUND((COALESCE(SUM(total_price) FILTER (WHERE status IN ('paid', 'insurance', 'nhif', 'sha', 'corporate')),0) / COALESCE(SUM(total_price),0)) * 100, 1)
           ELSE 0 END AS collection_rate
       FROM billing_items
       WHERE facility_id=$1 AND DATE(created_at)=$2

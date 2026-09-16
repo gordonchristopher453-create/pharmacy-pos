@@ -48,9 +48,13 @@ const protect = async (req, res, next) => {
 
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (req.user.is_super_admin) return next();
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ success: false, message: `Role '${req.user.role}' is not authorized.` });
+    if (req.user.is_super_admin || req.user.role === 'super_admin') return next();
+    const userRole = req.user.role;
+    const isAllowed = roles.includes(userRole) ||
+      (roles.includes('facility_admin') && userRole === 'admin') ||
+      (roles.includes('admin') && userRole === 'facility_admin');
+    if (!isAllowed) {
+      return res.status(403).json({ success: false, message: `Role '${userRole}' is not authorized.` });
     }
     next();
   };

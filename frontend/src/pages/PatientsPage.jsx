@@ -523,13 +523,14 @@ export default function PatientsPage() {
         return sum + Math.max(0, tot - paid);
       }, 0) || (parseFloat(visit.consultation_fee || 0) > 0 && !visit.fee_paid ? parseFloat(visit.consultation_fee) : 0);
 
+      const isVisitInsurance = ['insurance', 'nhif', 'sha', 'corporate'].includes(visit.payment_method);
       setCollectForm({
         payment_method: visit.payment_method || 'cash',
         amount: pendingTotal > 0 ? String(pendingTotal) : (billData.total > 0 ? String(billData.balance || billData.total) : '500'),
         cash_tendered: '',
         reference_number: visit.reference_number || '',
         notes: '',
-        insurance_provider: visit.insurance_provider || 'SHA / Social Health Authority',
+        insurance_provider: visit.insurance_provider || (isVisitInsurance ? 'SHA / Social Health Authority' : ''),
         member_number: visit.member_number || visit.sha_number || '',
         auth_code: visit.auth_code || '',
         copay_amount: visit.copay_amount ? String(visit.copay_amount) : '',
@@ -551,11 +552,13 @@ export default function PatientsPage() {
     setCollectSaving(true);
     try {
       const vid = collectVisit.id || collectVisit.visit_id;
+      const isIns = ['insurance', 'nhif', 'sha', 'corporate'].includes(collectForm.payment_method);
       const payload = {
         ...collectForm,
         visit_id: vid,
         item_ids: selectedCollectItems,
-        amount: parseFloat(collectForm.amount)
+        amount: parseFloat(collectForm.amount),
+        insurance_provider: isIns ? (collectForm.insurance_provider || 'SHA') : null
       };
       const res = await api.post(`/billing/visit/${vid}/pay`, payload);
       toast.success(`✅ Payment of KES ${parseFloat(collectForm.amount).toLocaleString('en-KE')} processed via ${collectForm.payment_method.toUpperCase()}`);

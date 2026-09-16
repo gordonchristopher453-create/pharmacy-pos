@@ -242,11 +242,17 @@ class VisitModel {
   static async updateStatus(id, pharmacy_id, status, mch_service, department) {
     const client = await pool.connect();
     try {
+      let normalizedStatus = (status || '').toLowerCase().trim();
+      if (['waiting_pharmacy', 'pharmacy_queue', 'to_pharmacy'].includes(normalizedStatus)) normalizedStatus = 'pharmacy';
+      if (['waiting_lab', 'to_lab', 'laboratory'].includes(normalizedStatus)) normalizedStatus = 'lab';
+      if (['waiting_injection', 'to_injection'].includes(normalizedStatus)) normalizedStatus = 'injection_room';
+      if (['finish', 'done'].includes(normalizedStatus)) normalizedStatus = 'completed';
+
       await client.query('BEGIN');
       const result = await client.query(`
         UPDATE visits SET status=$1, department=COALESCE($4,department), mch_service=COALESCE($5,mch_service), updated_at=NOW()
-        WHERE id=$2 AND pharmacy_id=$3 RETURNING *
-      `, [status, id, pharmacy_id, department || null, mch_service || null]);
+        WHERE id=$2 AND (pharmacy_id=$3 OR pharmacy_id IS NULL) RETURNING *
+      `, [normalizedStatus || status, id, pharmacy_id, department || null, mch_service || null]);
       await client.query('COMMIT');
       return result.rows[0];
     } catch(e) { await client.query('ROLLBACK'); throw e; }

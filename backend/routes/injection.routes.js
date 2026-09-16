@@ -54,8 +54,15 @@ router.get('/', async (req, res) => {
       ) vt ON true
       LEFT JOIN injection_room_orders iro ON v.id = iro.visit_id
       LEFT JOIN consultations c ON v.id = c.visit_id
-      WHERE v.pharmacy_id = $1 ${dateWhere}
-        AND LOWER(v.status) IN ('injection_room', 'waiting_injection')
+      WHERE v.pharmacy_id = $1
+        AND (
+          (LOWER(v.status) IN ('injection_room', 'waiting_injection') ${dateWhere})
+          OR EXISTS (
+            SELECT 1 FROM injection_room_orders iro_chk 
+            WHERE iro_chk.visit_id = v.id 
+              AND LOWER(COALESCE(iro_chk.status, 'pending')) = 'pending'
+          )
+        )
       GROUP BY v.id, v.pharmacy_id, v.patient_id, v.visit_number, v.visit_type,
         c.id, c.diagnosis, c.management_plan,
         v.status, v.priority, v.chief_complaint, v.attending_doctor, v.assigned_to,
@@ -70,9 +77,14 @@ router.get('/', async (req, res) => {
     const stats = await pool.query(`
       SELECT
         (SELECT COUNT(DISTINCT v2.id) FROM visits v2
-         LEFT JOIN injection_room_orders iro2 ON v2.id = iro2.visit_id
-         WHERE v2.pharmacy_id = $1 AND DATE(v2.created_at) = $2
-           AND v2.status = 'injection_room') as in_injection,
+         WHERE v2.pharmacy_id = $1
+           AND (
+             (LOWER(v2.status) IN ('injection_room', 'waiting_injection') AND DATE(v2.created_at) = $2)
+             OR EXISTS (
+               SELECT 1 FROM injection_room_orders iro2
+               WHERE iro2.visit_id = v2.id AND LOWER(COALESCE(iro2.status, 'pending')) = 'pending'
+             )
+           )) as in_injection,
         COUNT(*) FILTER (WHERE status='with_doctor') as with_doctor,
         COUNT(*) FILTER (WHERE status='discharged') as discharged
       FROM visits
@@ -406,14 +418,19 @@ router.put('/orders/:order_id/administer', async (req, res) => {
         [o.visit_id]
       );
       if (pendingCheck.rows[0]?.cnt === 0) {
-        await client.query(
-          "UPDATE visits SET status='with_doctor', updated_at=NOW() WHERE id=$1",
+        const pendingLab = await client.query(
+          "SELECT 1 FROM lab_requests WHERE visit_id::text=$1::text AND LOWER(COALESCE(status, 'pending')) = 'pending' LIMIT 1",
           [o.visit_id]
+        );
+        const nextStatus = pendingLab.rows.length > 0 ? 'lab' : 'with_doctor';
+        await client.query(
+          "UPDATE visits SET status=$1, updated_at=NOW() WHERE id=$2",
+          [nextStatus, o.visit_id]
         );
         const io = req.app.get('io');
         if (io) {
-          io.emit(`queue_update_${pharmacyId}`, { visit_id: o.visit_id, status: 'with_doctor' });
-          io.emit(`visit_updated_${pharmacyId}`, { visit_id: o.visit_id, status: 'with_doctor' });
+          io.emit(`queue_update_${pharmacyId}`, { visit_id: o.visit_id, status: nextStatus });
+          io.emit(`visit_updated_${pharmacyId}`, { visit_id: o.visit_id, status: nextStatus });
         }
       }
       await client.query('RELEASE SAVEPOINT pending_sp');
@@ -437,7 +454,7 @@ router.put('/visit/:visit_id/return-to-doctor', async (req, res) => {
   try {
     const result = await pool.query(`
       UPDATE visits SET status='with_doctor', updated_at=NOW()
-      WHERE id=$1 AND pharmacy_id=$2 RETURNING *
+      WHERE id=$1 AND (pharmacy_id=$2 OR pharmacy_id IS NULL) RETURNING *
     `, [req.params.visit_id, req.pharmacy_id]);
     if (!result.rows[0]) return errorResponse(res, 404, 'Visit not found');
 

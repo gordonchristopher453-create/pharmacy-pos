@@ -25,10 +25,12 @@ api.interceptors.response.use(
                  || 'An unexpected error occurred';
     const url     = error.config?.url || '';
 
-    // Auth errors
+    // Auth errors - only log out if /auth/me itself is rejected
     if (status === 401 && !url.includes('/auth/login')) {
-      toast.error('Session expired. Please log in again.');
-      store.dispatch(logout());
+      if (url.includes('/auth/me')) {
+        toast.error('Session expired. Please log in again.');
+        store.dispatch(logout());
+      }
       return Promise.reject(error);
     }
 

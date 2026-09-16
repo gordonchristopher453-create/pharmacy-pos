@@ -5,7 +5,7 @@ const { addExpense, getExpenses, deleteExpense, addPayroll, getPayroll, deletePa
 
 router.use(protect);
 router.use(requirePharmacy);
-router.use(authorize('facility_admin', 'accountant', 'super_admin'));
+router.use(authorize('facility_admin', 'admin', 'accountant', 'hr', 'super_admin'));
 
 router.get('/expenses', getExpenses);
 router.post('/expenses', addExpense);

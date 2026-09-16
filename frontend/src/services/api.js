@@ -29,9 +29,12 @@ api.interceptors.response.use(
         localStorage.setItem('accessToken', newToken);
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
-      } catch {
-        localStorage.clear();
-        window.location.href = '/login';
+      } catch (refreshErr) {
+        console.warn('Token refresh failed:', refreshErr?.message);
+        if (original?.url?.includes('/auth/me')) {
+          localStorage.clear();
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);

@@ -78,11 +78,17 @@ const create = async (req, res) => {
       send_to_pharmacy=false
     } = req.body;
 
+    let effectivePatientId = patient_id;
+    if (!effectivePatientId && visit_id) {
+      const vRow = await client.query('SELECT patient_id FROM visits WHERE id = $1', [visit_id]);
+      if (vRow.rows[0]) effectivePatientId = vRow.rows[0].patient_id;
+    }
+
     const finalDiagnosis = (diagnosis && String(diagnosis).trim()) ? String(diagnosis).trim() : 'Under Investigation / Pending';
 
     const encounter = await EncounterModel.getOrCreateActiveEncounter({
       visit_id,
-      patient_id,
+      patient_id: effectivePatientId,
       pharmacy_id: req.pharmacy_id,
       doctor_id: req.user?.id,
       current_step: send_to_pharmacy ? 'pharmacy' : 'consultation'
@@ -100,7 +106,7 @@ const create = async (req, res) => {
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *
     `, [
-      req.pharmacy_id, visit_id, patient_id, req.user.id, encounter.id,
+      req.pharmacy_id, visit_id, effectivePatientId, req.user.id, encounter.id,
       presenting_complaint||null, history_of_illness||null, examination_findings||null,
       review_of_systems||null, impression||null,
       finalDiagnosis, icd_code||null, management_plan||null,
@@ -117,7 +123,7 @@ const create = async (req, res) => {
     if (send_to_pharmacy) {
       await client.query(`
         UPDATE visits SET status = 'pharmacy', updated_at = NOW()
-        WHERE id = $1 AND pharmacy_id = $2
+        WHERE id = $1 AND (pharmacy_id = $2 OR pharmacy_id IS NULL)
       `, [visit_id, req.pharmacy_id]);
       await EncounterModel.completeEncounter(encounter.id, req.user?.id, 'pharmacy', { visit_id }, client);
       const io = req.app.get('io');
@@ -218,7 +224,7 @@ const update = async (req, res) => {
     if (send_to_pharmacy) {
       await client.query(`
         UPDATE visits SET status = 'pharmacy', updated_at = NOW()
-        WHERE id = $1 AND pharmacy_id = $2
+        WHERE id = $1 AND (pharmacy_id = $2 OR pharmacy_id IS NULL)
       `, [c.visit_id, req.pharmacy_id]);
       await EncounterModel.completeEncounter(encounter.id, req.user?.id, 'pharmacy', { visit_id: c.visit_id }, client);
       const io = req.app.get('io');
@@ -457,8 +463,8 @@ async function _savePrescriptions(client, list, c, req) {
         // Insert new prescription
         const insRes = await client.query(`
           INSERT INTO prescriptions (pharmacy_id,consultation_id,visit_id,patient_id,doctor_id,encounter_id,
-            drug_name,dosage,frequency,duration,route,instructions,quantity,product_id,price,ddc_code,scientific_code)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id
+            drug_name,dosage,frequency,duration,route,instructions,quantity,product_id,price,ddc_code,scientific_code,status)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'pending') RETURNING id
         `, [req.pharmacy_id,c.id,c.visit_id,c.patient_id,req.user.id,c.encounter_id||null,
             d.drug_name,d.dosage||null,d.frequency||null,d.duration||null,
             d.route||'oral',d.instructions||null,qty,productId,price,d.ddc_code||null,d.scientific_code||null]);

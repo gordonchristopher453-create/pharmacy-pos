@@ -305,23 +305,32 @@ export default function BillingPage() {
       {tab === 'dashboard' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Top Key Performance Indicators (KPIs) */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
             <Card style={{ padding: 18, borderLeft: '4px solid var(--accent)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Billed Today</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Billed</span>
                 <div style={{ padding: 6, background: 'var(--accent)15', borderRadius: 8, color: 'var(--accent)' }}><DollarSign size={16}/></div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{fmt(totalBilled)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{fmt(totalBilled)}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{summary?.total_items || 0} Total Billed Items</div>
             </Card>
 
             <Card style={{ padding: 18, borderLeft: '4px solid #10b981' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Collections Today</span>
-                <div style={{ padding: 6, background: '#10b98115', borderRadius: 8, color: '#10b981' }}><CheckCircle size={16}/></div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#10b981', textTransform: 'uppercase' }}>Cash & Liquid Collected</span>
+                <div style={{ padding: 6, background: '#10b98115', borderRadius: 8, color: '#10b981' }}><Wallet size={16}/></div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#10b981', fontFamily: 'monospace' }}>{fmt(totalCollected)}</div>
-              <div style={{ fontSize: 11, color: '#10b981', marginTop: 4, fontWeight: 600 }}>{collectionRate}% Collection Rate</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#10b981', fontFamily: 'monospace' }}>{fmt(cashCollected + mpesaCollected + bankCollected)}</div>
+              <div style={{ fontSize: 11, color: '#10b981', marginTop: 4, fontWeight: 600 }}>Cash {fmt(cashCollected)} · M-Pesa {fmt(mpesaCollected)}</div>
+            </Card>
+
+            <Card style={{ padding: 18, borderLeft: '4px solid #3b82f6' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase' }}>Insurance / SHA Claims</span>
+                <div style={{ padding: 6, background: '#3b82f615', borderRadius: 8, color: '#3b82f6' }}><Shield size={16}/></div>
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#3b82f6', fontFamily: 'monospace' }}>{fmt(insuranceCollected)}</div>
+              <div style={{ fontSize: 11, color: '#3b82f6', marginTop: 4, fontWeight: 600 }}>{summary?.insurance_count || 0} Insurance Claims Billed</div>
             </Card>
 
             <Card style={{ padding: 18, borderLeft: '4px solid #ef4444' }}>
@@ -329,7 +338,7 @@ export default function BillingPage() {
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Outstanding Arrears</span>
                 <div style={{ padding: 6, background: '#ef444415', borderRadius: 8, color: '#ef4444' }}><AlertCircle size={16}/></div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#ef4444', fontFamily: 'monospace' }}>{fmt(totalPending)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#ef4444', fontFamily: 'monospace' }}>{fmt(totalPending)}</div>
               <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{summary?.pending_count || 0} Bills Pending Collection</div>
             </Card>
 
@@ -338,7 +347,7 @@ export default function BillingPage() {
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Waived / Exemptions</span>
                 <div style={{ padding: 6, background: '#8b5cf615', borderRadius: 8, color: '#8b5cf6' }}><Shield size={16}/></div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#8b5cf6', fontFamily: 'monospace' }}>{fmt(totalWaived)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#8b5cf6', fontFamily: 'monospace' }}>{fmt(totalWaived)}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{summary?.waived_count || 0} Waived Services</div>
             </Card>
           </div>
