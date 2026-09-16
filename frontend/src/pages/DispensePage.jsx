@@ -15,6 +15,7 @@ export default function DispensePage({ user }) {
   const [history, setHistory]       = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   const [search, setSearch]         = useState('');
+  const [histType, setHistType]     = useState(''); // '' | 'opd' | 'inpatient'
   const today = new Date().toISOString().split('T')[0];
   const [dateFrom, setDateFrom]     = useState(today);
   const [dateTo, setDateTo]         = useState(today);
@@ -25,6 +26,7 @@ export default function DispensePage({ user }) {
     setRxLoading(true);
     try {
       const params = new URLSearchParams();
+      params.append('type', 'opd');
       if (queueDate) {
         params.append('date_from', queueDate);
         params.append('date_to', queueDate);
@@ -33,8 +35,11 @@ export default function DispensePage({ user }) {
       }
       if (queueSearch) params.append('search', queueSearch);
       const res = await api.get('/consultations/pharmacy-queue?' + params.toString());
-      setRxQueue(res.data.data || []);
-    } catch { toast.error('Failed to fetch prescription queue'); }
+      const raw = res.data.data || [];
+      // Guarantee only OPD outpatients are placed in this queue
+      const opdOnly = raw.filter(r => !r.is_inpatient && r.status !== 'inpatient' && r.status !== 'admitted' && r.visit_type !== 'inpatient' && !r.ward_name);
+      setRxQueue(opdOnly);
+    } catch { toast.error('Failed to fetch outpatient prescription queue'); }
     finally { setRxLoading(false); }
   }, [queueDate, queueSearch]);
 
@@ -42,7 +47,10 @@ export default function DispensePage({ user }) {
     setRxLoading(true);
     try {
       const res = await api.get('/inpatient/pharmacy-queue');
-      setInpatientRxQueue(res.data.data || []);
+      const raw = res.data.data || [];
+      // Guarantee only true inpatients are placed in this queue
+      const ipdOnly = raw.filter(r => r.is_inpatient || r.visit_status === 'inpatient' || r.visit_status === 'admitted' || r.visit_type === 'inpatient' || Boolean(r.ward_name));
+      setInpatientRxQueue(ipdOnly);
     } catch { toast.error('Failed to fetch inpatient prescriptions folder'); }
     finally { setRxLoading(false); }
   }, []);
@@ -54,11 +62,12 @@ export default function DispensePage({ user }) {
       if (dateFrom) params.append('date_from', dateFrom);
       if (dateTo) params.append('date_to', dateTo);
       if (search) params.append('search', search);
+      if (histType) params.append('type', histType);
       const res = await api.get('/pharmacy/dispense-history?' + params.toString());
       setHistory(res.data.data || []);
     } catch { toast.error('Failed to fetch dispense history'); }
     finally { setHistLoading(false); }
-  }, [dateFrom, dateTo, search]);
+  }, [dateFrom, dateTo, search, histType]);
 
   useEffect(() => {
     fetchRxQueue();
@@ -96,7 +105,7 @@ export default function DispensePage({ user }) {
 
   const openRx = (rx) => {
     setSelectedRx(rx);
-    const isInpatient = rx.is_inpatient || rx.visit_status === 'inpatient' || rx.visit_type === 'inpatient' || rx.ward_name;
+    const isInpatient = Boolean(rx.is_inpatient || rx.visit_status === 'inpatient' || rx.visit_status === 'admitted' || rx.visit_type === 'inpatient' || rx.ward_name);
     checkRxPayment(rx.id, isInpatient);
   };
 
@@ -263,15 +272,18 @@ export default function DispensePage({ user }) {
                   onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>{rx.patient_name}</span>
                         <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 6 }}>{rx.patient_number}</span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 800 }}>OPD OUTPATIENT</span>
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{rx.gender} • Dr. {rx.doctor_name || 'Consultant'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{rx.gender} • Dr. {rx.doctor_name || 'Consultant'} • Visit #{rx.visit_number || (rx.id && rx.id.slice(0, 8))}</div>
                       {rx.diagnosis && <div style={{ fontSize: 13, color: 'var(--accent)', marginTop: 4, fontWeight: 700 }}>Diagnosis: {rx.diagnosis}</div>}
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--accent)20', color: 'var(--accent)', fontWeight: 800 }}>PRESCRIPTION READY</span>
+                      <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: rx.paid ? 'var(--accent)20' : 'var(--danger)20', color: rx.paid ? 'var(--accent)' : 'var(--danger)', fontWeight: 800 }}>
+                        {rx.paid ? '✅ READY TO DISPENSE' : '⏳ AWAITING PAYMENT'}
+                      </span>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(rx.visit_date || Date.now()).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}</div>
                     </div>
                   </div>
@@ -307,14 +319,19 @@ export default function DispensePage({ user }) {
       {tab === 'inpatient' && (
         <>
           <div style={{ background: 'var(--bg-surface)', borderRadius: 14, border: '1px solid var(--border)', padding: 18, marginBottom: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
               <div>
-                <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>🏥 Inpatient Ward Prescriptions</h3>
+                <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>🏥 Inpatient (IPD) Ward Prescriptions</h3>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Inpatient drug prescriptions proceed immediately for ward administration without upfront payment collection.</p>
               </div>
-              <button onClick={fetchInpatientQueue} style={{ padding: '8px 16px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: '#0F1612', fontWeight: 800, cursor: 'pointer', fontSize: 12 }}>
-                Refresh Inpatient Queue
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, padding: '4px 10px', borderRadius: 8, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa' }}>
+                  {inpatientRxQueue.length} Admitted Patients Waiting
+                </span>
+                <button onClick={fetchInpatientQueue} style={{ padding: '8px 16px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: '#0F1612', fontWeight: 800, cursor: 'pointer', fontSize: 12 }}>
+                  Refresh Inpatient Queue
+                </button>
+              </div>
             </div>
           </div>
 
@@ -337,17 +354,18 @@ export default function DispensePage({ user }) {
                   onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>🛏️ {rx.patient_name}</span>
                         <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 6 }}>{rx.patient_number}</span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 800 }}>IPD INPATIENT</span>
                         <span style={{ fontSize: 11, background: 'var(--accent)20', color: 'var(--accent)', padding: '2px 8px', borderRadius: 6, fontWeight: 800 }}>
-                          🏥 {rx.ward_name || 'Ward'} • Bed {rx.bed_number || 'N/A'}
+                          🏥 {rx.ward_name || 'Inpatient Ward'} • Bed {rx.bed_number || 'Assigned'}
                         </span>
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{rx.gender} • Prescribing Doctor: Dr. {rx.doctor_name || 'Attending'}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--accent)20', color: 'var(--accent)', fontWeight: 800 }}>WARD DISPENSE READY</span>
+                      <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: 800 }}>WARD ACCOUNT READY</span>
                     </div>
                   </div>
 
@@ -397,11 +415,16 @@ export default function DispensePage({ user }) {
                 Search Audit Log
               </button>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Quick Filter:</span>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Department:</span>
+              <button onClick={() => setHistType('')} style={{ padding: '4px 10px', background: !histType ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${!histType ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: !histType ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>All Visits</button>
+              <button onClick={() => setHistType('opd')} style={{ padding: '4px 10px', background: histType === 'opd' ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${histType === 'opd' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: histType === 'opd' ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>💊 OPD Outpatient</button>
+              <button onClick={() => setHistType('inpatient')} style={{ padding: '4px 10px', background: histType === 'inpatient' ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-elevated)', border: `1px solid ${histType === 'inpatient' ? '#60a5fa' : 'var(--border)'}`, borderRadius: 6, color: histType === 'inpatient' ? '#60a5fa' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>🏥 IPD Inpatient</button>
+
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', marginLeft: 8 }}>Period:</span>
               <button onClick={() => { setDateFrom(today); setDateTo(today); }} style={{ padding: '4px 10px', background: dateFrom === today && dateTo === today ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${dateFrom === today && dateTo === today ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: dateFrom === today && dateTo === today ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Today</button>
-              <button onClick={() => { setDateFrom('2026-01-01'); setDateTo(today); }} style={{ padding: '4px 10px', background: dateFrom === '2026-01-01' ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${dateFrom === '2026-01-01' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: dateFrom === '2026-01-01' ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Year to Date (Jan - Today)</button>
-              <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={{ padding: '4px 10px', background: !dateFrom && !dateTo ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${!dateFrom && !dateTo ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: !dateFrom && !dateTo ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>All History Log</button>
+              <button onClick={() => { setDateFrom('2026-01-01'); setDateTo(today); }} style={{ padding: '4px 10px', background: dateFrom === '2026-01-01' ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${dateFrom === '2026-01-01' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: dateFrom === '2026-01-01' ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Year to Date</button>
+              <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={{ padding: '4px 10px', background: !dateFrom && !dateTo ? 'var(--accent-soft)' : 'var(--bg-elevated)', border: `1px solid ${!dateFrom && !dateTo ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: !dateFrom && !dateTo ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>All Time</button>
             </div>
           </div>
 
@@ -417,11 +440,19 @@ export default function DispensePage({ user }) {
                 <div key={i} style={{ background: 'var(--bg-surface)', borderRadius: 14, border: '1px solid var(--border)', padding: 18 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{p.patient_name}</span>
                         <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 6 }}>{p.patient_number}</span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: p.is_inpatient ? 'rgba(59, 130, 246, 0.15)' : 'var(--accent-soft)', color: p.is_inpatient ? '#60a5fa' : 'var(--accent)', fontWeight: 800 }}>
+                          {p.is_inpatient ? '🏥 IPD WARD' : '💊 OPD OUTPATIENT'}
+                        </span>
+                        {p.ward_name && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>
+                            • {p.ward_name} {p.bed_number ? `(Bed ${p.bed_number})` : ''}
+                          </span>
+                        )}
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Dr. {p.doctor_name} • Visit: {p.visit_number}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Dr. {p.doctor_name || 'Consultant'} • Visit: {p.visit_number}</div>
                       {p.diagnosis && <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 2, fontWeight: 700 }}>Dx: {p.diagnosis}</div>}
                     </div>
                     <div style={{ textAlign: 'right' }}>
@@ -450,8 +481,13 @@ export default function DispensePage({ user }) {
           <div style={{ background: 'var(--bg-surface)', borderRadius: 20, border: '1px solid var(--border)', width: '100%', maxWidth: 620, maxHeight: '90vh', overflow: 'auto', padding: 28, boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
               <div>
-                <h2 style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.3px' }}>💊 {selectedRx.patient_name}</h2>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>MRN: {selectedRx.patient_number} • Dr. {selectedRx.doctor_name}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <h2 style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.3px' }}>💊 {selectedRx.patient_name}</h2>
+                  <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, fontWeight: 800, background: selectedRx.ward_name || selectedRx.is_inpatient ? 'rgba(59, 130, 246, 0.15)' : 'var(--accent-soft)', color: selectedRx.ward_name || selectedRx.is_inpatient ? '#60a5fa' : 'var(--accent)' }}>
+                    {selectedRx.ward_name || selectedRx.is_inpatient ? `🏥 IPD INPATIENT (${selectedRx.ward_name || 'Ward'} • Bed ${selectedRx.bed_number || 'Assigned'})` : '💊 OPD OUTPATIENT'}
+                  </span>
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>MRN: {selectedRx.patient_number} • Dr. {selectedRx.doctor_name || 'Consultant'}</p>
                 {selectedRx.diagnosis && <p style={{ fontSize: 13, color: 'var(--accent)', marginTop: 4, fontWeight: 700 }}>Diagnosis: {selectedRx.diagnosis}</p>}
               </div>
               <button onClick={() => { setSelectedRx(null); setRxPayment(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}><X size={22}/></button>
@@ -466,11 +502,15 @@ export default function DispensePage({ user }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <div>
                     <div style={{ fontWeight: 800, color: rxPayment.paid ? 'var(--accent)' : 'var(--danger)', fontSize: 14 }}>
-                      {rxPayment.paid ? '✅ PAID & CLEARED' : '❌ UNPAID — KES ' + (rxPayment.balance || 0)}
+                      {rxPayment.is_inpatient ? '🏥 INPATIENT WARD ACCOUNT (BILLED TO ADMISSION)' : rxPayment.paid ? '✅ PAID & CLEARED' : '❌ UNPAID — KES ' + (rxPayment.balance || 0)}
                     </div>
-                    {!rxPayment.paid && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Direct billing settlement from counter:</div>}
+                    {rxPayment.is_inpatient ? (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ready for immediate ward dispensing — settled upon hospital discharge.</div>
+                    ) : !rxPayment.paid ? (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Direct billing settlement from counter:</div>
+                    ) : null}
                   </div>
-                  {!rxPayment.paid && (
+                  {!rxPayment.paid && !rxPayment.is_inpatient && (
                     <button onClick={() => handleQuickPay(selectedRx.id)} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#0F1612', fontWeight: 800, fontSize: 12, cursor: 'pointer', boxShadow: '0 2px 8px var(--accent)40' }}>
                       💳 Counter Settlement
                     </button>

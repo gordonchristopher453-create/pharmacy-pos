@@ -543,11 +543,11 @@ export default function POSPage() {
     setRxLoading(true);
     try {
       const today = new Date().toISOString().split('T')[0];
-      const res = await api.get(`/consultations/pharmacy-queue?date_from=${today}&date_to=${today}`);
+      const res = await api.get(`/consultations/pharmacy-queue?type=opd&date_from=${today}&date_to=${today}`);
       let data = res.data.data || [];
       // If none found for today, check for any pending prescriptions
       if (data.length === 0) {
-        const allRes = await api.get('/consultations/pharmacy-queue?all_dates=true');
+        const allRes = await api.get('/consultations/pharmacy-queue?type=opd&all_dates=true');
         data = (allRes.data.data || []).filter(item => (item.prescriptions || []).some(p => p.status === 'pending' || !p.status));
       }
       setRxQueue(data);
@@ -1077,9 +1077,10 @@ export default function POSPage() {
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                       <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>{rx.patient_name}</span>
                           <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 6 }}>{rx.patient_number}</span>
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 800 }}>OPD OUTPATIENT</span>
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Dr. {rx.doctor_name || 'Consultant Doctor'} • Gender: {rx.gender || '—'}</div>
                         {rx.diagnosis && <div style={{ fontSize: 13, color: 'var(--accent)', marginTop: 4, fontWeight: 700 }}>Diagnosis: {rx.diagnosis}</div>}

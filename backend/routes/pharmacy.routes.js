@@ -215,7 +215,7 @@ router.delete("/:id", protect, superAdminOnly, async (req, res) => {
 
 router.get('/dispense-history', protect, async (req, res) => {
   try {
-    const { search, date_from, date_to, limit = 500 } = req.query;
+    const { search, date_from, date_to, limit = 500, type } = req.query;
 
     const params = [req.pharmacy_id];
     let whereClause = `(p.pharmacy_id = $1 OR p.pharmacy_id IS NULL) AND (p.status = 'dispensed' OR p.status = 'Dispensed' OR p.dispensed_at IS NOT NULL)`;
@@ -234,18 +234,44 @@ router.get('/dispense-history', protect, async (req, res) => {
       whereClause += ` AND (pat.full_name ILIKE $${params.length} OR pat.patient_number ILIKE $${params.length} OR p.drug_name ILIKE $${params.length})`;
     }
 
+    if (type === 'inpatient' || type === 'ipd') {
+      whereClause += ` AND (
+        v.status IN ('inpatient', 'admitted')
+        OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
+        OR ia.id IS NOT NULL
+        OR b.id IS NOT NULL
+      )`;
+    } else if (type === 'opd') {
+      whereClause += ` AND NOT (
+        v.status IN ('inpatient', 'admitted')
+        OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
+        OR ia.id IS NOT NULL
+        OR b.id IS NOT NULL
+      )`;
+    }
+
     params.push(parseInt(limit));
     const result = await pool.query(`
       SELECT p.*, pat.full_name as patient_name, pat.patient_number,
         pat.gender, v.visit_number, v.visit_date,
         c.diagnosis, u.full_name as doctor_name,
-        d.full_name as dispensed_by_name
+        d.full_name as dispensed_by_name,
+        w.name as ward_name, b.bed_number,
+        (
+          EXISTS(SELECT 1 FROM inpatient_admissions ia2 WHERE ia2.visit_id::text = v.id::text AND ia2.status = 'admitted')
+          OR EXISTS(SELECT 1 FROM beds b2 WHERE b2.current_visit_id::text = v.id::text AND b2.status = 'occupied')
+          OR v.status IN ('inpatient', 'admitted')
+          OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
+        ) as is_inpatient
       FROM prescriptions p
       LEFT JOIN consultations c ON p.consultation_id::text = c.id::text
       LEFT JOIN visits v ON p.visit_id::text = v.id::text
       LEFT JOIN patients pat ON COALESCE(p.patient_id, v.patient_id)::text = pat.id::text
       LEFT JOIN users u ON COALESCE(p.doctor_id, c.doctor_id)::text = u.id::text
       LEFT JOIN users d ON p.dispensed_by::text = d.id::text
+      LEFT JOIN inpatient_admissions ia ON ia.visit_id::text = v.id::text AND ia.status = 'admitted'
+      LEFT JOIN beds b ON (b.current_visit_id::text = v.id::text AND b.status = 'occupied') OR (ia.bed_id::text = b.id::text)
+      LEFT JOIN wards w ON b.ward_id::text = w.id::text
       WHERE ${whereClause}
       ORDER BY COALESCE(p.dispensed_at, p.created_at) DESC
       LIMIT $${params.length}

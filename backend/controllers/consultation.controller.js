@@ -260,7 +260,7 @@ const update = async (req, res) => {
 // ── PHARMACY QUEUE ────────────────────────────────────────────────────────────
 const getPharmacyQueue = async (req, res) => {
   try {
-    const { search, date_from, date_to, all_dates } = req.query;
+    const { search, date_from, date_to, all_dates, type } = req.query;
     const params = [req.pharmacy_id];
     let extraClauses = '';
 
@@ -280,6 +280,26 @@ const getPharmacyQueue = async (req, res) => {
       extraClauses += ` AND (v.created_at::date = CURRENT_DATE OR pr.created_at::date = CURRENT_DATE OR pr.status = 'pending')`;
     }
 
+    // Separate OPD and IPD
+    if (type === 'inpatient' || type === 'ipd') {
+      extraClauses += ` AND (
+        v.status IN ('inpatient', 'admitted')
+        OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
+        OR ia.id IS NOT NULL
+        OR b.id IS NOT NULL
+      )`;
+    } else if (type === 'all') {
+      // Do not restrict by visit category
+    } else {
+      // Default: OPD (outpatient) only — exclude inpatients
+      extraClauses += ` AND NOT (
+        v.status IN ('inpatient', 'admitted')
+        OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient'
+        OR ia.id IS NOT NULL
+        OR b.id IS NOT NULL
+      )`;
+    }
+
     const result = await pool.query(`
       SELECT v.*,
         pat.full_name AS patient_name, pat.patient_number, pat.allergies,
@@ -287,9 +307,10 @@ const getPharmacyQueue = async (req, res) => {
         c.diagnosis, c.management_plan, c.id AS consultation_id,
         u.full_name AS doctor_name,
         w.name AS ward_name, b.bed_number,
-        (EXISTS(SELECT 1 FROM inpatient_admissions ia WHERE ia.visit_id::text = v.id::text AND ia.status = 'admitted')
-         OR EXISTS(SELECT 1 FROM beds b WHERE b.current_visit_id::text = v.id::text AND b.status = 'occupied')
-         OR v.status = 'inpatient' OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient') AS is_inpatient,
+        (EXISTS(SELECT 1 FROM inpatient_admissions ia2 WHERE ia2.visit_id::text = v.id::text AND ia2.status = 'admitted')
+         OR EXISTS(SELECT 1 FROM beds b2 WHERE b2.current_visit_id::text = v.id::text AND b2.status = 'occupied')
+         OR v.status IN ('inpatient', 'admitted')
+         OR LOWER(COALESCE(v.visit_type, '')) = 'inpatient') AS is_inpatient,
         (SELECT COALESCE(SUM(total_price) FILTER (WHERE status = 'pending'), 0) = 0 FROM billing_items WHERE visit_id::text = v.id::text) AS paid,
         json_agg(DISTINCT jsonb_build_object(
           'id',pr.id,'drug_name',pr.drug_name,'dosage',pr.dosage,
