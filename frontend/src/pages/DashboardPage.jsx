@@ -6,7 +6,8 @@ import toast from 'react-hot-toast';
 import {
   Users, FlaskConical, Pill, UserRound, Stethoscope,
   TrendingUp, Package, Clock, DollarSign, AlertTriangle,
-  RefreshCw, Loader, ChevronRight, Activity, Search
+  RefreshCw, Loader, ChevronRight, Activity, Search,
+  ShoppingCart, Receipt, Truck, ArrowUpRight, CheckCircle2
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -59,30 +60,56 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [visits, setVisits] = useState([]);
   const [billingQueue, setBillingQueue] = useState([]);
+  const [recentSales, setRecentSales] = useState([]);
+  const [lowStockItems, setLowStockItems] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStep, setFilterStep] = useState('all'); // all, triage, doctor, lab, pharmacy, discharged
   const [payingVisitId, setPayingVisitId] = useState(null);
+
+  const isPharmacyOnly = user?.pharmacy?.facility_type === 'pharmacy';
 
   useEffect(() => { fetchStats(); }, []);
 
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const [visitRes, stockRes, salesRes, billRes] = await Promise.all([
-        api.get('/patients/visits?date=today').catch(() => ({ data: { data: { stats: {}, visits: [] } } })),
-        api.get('/stock').catch(() => ({ data: { data: { stats: {} } } })),
-        api.get(`/sales/summary/daily?date=${new Date().toISOString().split('T')[0]}`).catch(() => ({ data: { data: {} } })),
-        api.get('/billing/queue').catch(() => ({ data: { data: [] } })),
-      ]);
-      setStats({
-        visits: visitRes.data.data?.stats || {},
-        stock: stockRes.data.data?.stats || {},
-        sales: salesRes.data.data || {},
-      });
-      setVisits(visitRes.data.data?.visits || []);
-      setBillingQueue(billRes.data.data || []);
+      if (isPharmacyOnly) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const [salesRes, stockRes, recentSalesRes] = await Promise.all([
+          api.get(`/sales/summary/daily?date=${todayStr}`).catch(() => ({ data: { data: {} } })),
+          api.get('/stock').catch(() => ({ data: { data: { stats: {}, stock: [] } } })),
+          api.get('/sales?limit=6').catch(() => ({ data: { data: { sales: [] } } })),
+        ]);
+        setStats({
+          sales: salesRes.data.data || {},
+          stock: stockRes.data.data?.stats || {},
+        });
+        const salesList = recentSalesRes.data.data?.sales || recentSalesRes.data.data || [];
+        setRecentSales(Array.isArray(salesList) ? salesList.slice(0, 6) : []);
+        const stockList = stockRes.data.data?.stock || [];
+        const lowItems = stockList.filter(s => {
+          const qty = Number(s.quantity_remaining ?? s.total_quantity ?? 0);
+          const reorder = Number(s.reorder_level ?? 10);
+          return qty <= reorder;
+        });
+        setLowStockItems(lowItems.slice(0, 6));
+      } else {
+        const [visitRes, stockRes, salesRes, billRes] = await Promise.all([
+          api.get('/patients/visits?date=today').catch(() => ({ data: { data: { stats: {}, visits: [] } } })),
+          api.get('/stock').catch(() => ({ data: { data: { stats: {} } } })),
+          api.get(`/sales/summary/daily?date=${new Date().toISOString().split('T')[0]}`).catch(() => ({ data: { data: {} } })),
+          api.get('/billing/queue').catch(() => ({ data: { data: [] } })),
+        ]);
+        setStats({
+          visits: visitRes.data.data?.stats || {},
+          stock: stockRes.data.data?.stats || {},
+          sales: salesRes.data.data || {},
+        });
+        setVisits(visitRes.data.data?.visits || []);
+        setBillingQueue(billRes.data.data || []);
+      }
     } catch {
-      toast.error('Failed to sync hospital stats');
+      toast.error(isPharmacyOnly ? 'Failed to sync pharmacy metrics' : 'Failed to sync hospital stats');
     } finally {
       setLoading(false);
     }
@@ -189,6 +216,244 @@ export default function DashboardPage() {
       { label: 'M-Pesa', value: fmtMoney(stats.sales?.mpesa_total), color: '#3b82f6' },
     ],
   };
+
+  if (isPharmacyOnly) {
+    return (
+      <div style={{ padding: 28, height: '100vh', overflow: 'auto' }}>
+        {/* Retail Pharmacy Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <span style={{ fontSize: 10, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.5px' }}>
+                STANDALONE PHARMACY SYSTEM
+              </span>
+              <span style={{ fontSize: 10, background: '#10b98115', color: '#10b981', fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.5px' }}>
+                POS & INVENTORY LIVE
+              </span>
+            </div>
+            <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.4px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              💊 {user?.pharmacy?.name || 'Retail Pharmacy Terminal'}
+            </h1>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+              Pharmacy Point of Sale, Prescription Dispensing & Drug Inventory Management · {new Date().toLocaleDateString('en-KE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={fetchStats} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }}>
+              <RefreshCw size={14} /> Sync Metrics
+            </button>
+            <button onClick={() => navigate('/app/pos')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--accent)', color: '#0F1612', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              <ShoppingCart size={15} /> Open POS Counter
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Stat Metric Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 24 }}>
+          {/* Card 1: Today's Revenue */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', position: 'relative', overflow: 'hidden' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Today's Sales Revenue</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>
+              {fmtMoney(stats.sales?.total_revenue)}
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+              <span>Cash: <strong style={{ color: '#10b981' }}>{fmtMoney(stats.sales?.cash_total)}</strong></span>
+              <span>·</span>
+              <span>M-Pesa: <strong style={{ color: '#3b82f6' }}>{fmtMoney(stats.sales?.mpesa_total)}</strong></span>
+            </div>
+          </div>
+
+          {/* Card 2: Transactions */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Today's Transactions</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: '#3b82f6', marginTop: 6, fontFamily: 'monospace' }}>
+              {stats.sales?.total_transactions || 0}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+              Total counter customer checkouts today
+            </div>
+          </div>
+
+          {/* Card 3: Stock Items */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Inventory Batches</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', marginTop: 6, fontFamily: 'monospace' }}>
+              {stats.stock?.total_items || 0}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+              Active stock batches currently tracked
+            </div>
+          </div>
+
+          {/* Card 4: Low Stock Alert */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low Stock & Reorders</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: (stats.stock?.low_stock_count || 0) > 0 ? '#ef4444' : '#10b981', marginTop: 6, fontFamily: 'monospace' }}>
+              {stats.stock?.low_stock_count || 0}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: (stats.stock?.low_stock_count || 0) > 0 ? '#ef4444' : 'var(--text-muted)' }}>
+              {(stats.stock?.low_stock_count || 0) > 0 ? '⚠️ Items require immediate purchase order' : '✅ All stock levels healthy'}
+            </div>
+          </div>
+        </div>
+
+        {/* Pharmacy Quick Access Actions */}
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '20px 24px', marginBottom: 28 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>
+            ⚡ Pharmacy Operations & Quick Launch
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <button onClick={() => navigate('/app/pos')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#10b98120', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ShoppingCart size={18} color="#10b981" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Point of Sale</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Counter checkouts</div>
+              </div>
+            </button>
+
+            <button onClick={() => navigate('/app/dispense')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#3b82f620', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Pill size={18} color="#3b82f6" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Dispense Queue</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Prescriptions</div>
+              </div>
+            </button>
+
+            <button onClick={() => navigate('/app/products')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#8b5cf620', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Package size={18} color="#8b5cf6" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Products Catalog</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Prices & formulas</div>
+              </div>
+            </button>
+
+            <button onClick={() => navigate('/app/stock')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#f59e0b20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Package size={18} color="#f59e0b" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Stock & Batches</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Expiry tracking</div>
+              </div>
+            </button>
+
+            <button onClick={() => navigate('/app/purchases')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#06b6d420', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Truck size={18} color="#06b6d4" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Purchase Orders</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Receive stock</div>
+              </div>
+            </button>
+
+            <button onClick={() => navigate('/app/sales')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#ec489920', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Receipt size={18} color="#ec4899" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Sales Records</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Daily audit log</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Two-Column Grid: Recent Sales & Low Stock Warnings */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 20 }}>
+          {/* Left: Recent Sales */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Receipt size={16} color="var(--accent)" /> Recent Counter Sales
+              </div>
+              <button onClick={() => navigate('/app/sales')} style={{ fontSize: 12, color: 'var(--accent)', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                View All <ArrowUpRight size={13} />
+              </button>
+            </div>
+            {recentSales.length === 0 ? (
+              <div style={{ padding: '30px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 10 }}>
+                No sales recorded today yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {recentSales.map((s, idx) => (
+                  <div key={s.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {s.invoice_number || s.receipt_number || `Sale #${s.id}`}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {s.customer_name || 'Walk-in Customer'} · <span style={{ textTransform: 'uppercase', color: 'var(--accent)', fontWeight: 600 }}>{s.payment_method || 'CASH'}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)', fontFamily: 'monospace' }}>
+                        KES {parseFloat(s.total_amount || 0).toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                        {s.created_at ? new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: Low Stock & Reorders */}
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AlertTriangle size={16} color="#ef4444" /> Low Stock & Reorder Alerts
+              </div>
+              <button onClick={() => navigate('/app/stock')} style={{ fontSize: 12, color: 'var(--accent)', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                Stock Hub <ArrowUpRight size={13} />
+              </button>
+            </div>
+            {lowStockItems.length === 0 ? (
+              <div style={{ padding: '30px 10px', textAlign: 'center', color: '#10b981', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <CheckCircle2 size={16} color="#10b981" /> All medication stock levels are above reorder threshold.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {lowStockItems.map((item, idx) => {
+                  const qty = Number(item.quantity_remaining ?? item.total_quantity ?? 0);
+                  const min = Number(item.reorder_level ?? 10);
+                  return (
+                    <div key={item.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                          {item.product_name || item.name || 'Pharmaceutical Item'}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                          Batch: <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{item.batch_number || 'N/A'}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: qty === 0 ? '#ef4444' : '#f59e0b', fontFamily: 'monospace' }}>
+                          {qty} left (min: {min})
+                        </div>
+                        <button onClick={() => navigate('/app/purchases')} style={{ fontSize: 10, color: 'var(--accent)', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, padding: 0, marginTop: 2 }}>
+                          + Reorder Now
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 28, height: '100vh', overflow: 'auto' }}>

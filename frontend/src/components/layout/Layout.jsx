@@ -6,7 +6,7 @@ import {
   Users, TrendingUp, Settings, ShoppingBag, Truck,
   Menu, X, Building2, Globe, UserRound, DollarSign, Stethoscope,
   FlaskConical, FileText, AlertTriangle, BedDouble, Baby, Shield, Clock, Camera,
-  ChevronDown, ChevronRight, Heart, Syringe, ClipboardList, Calendar, Receipt
+  ChevronDown, ChevronRight, Heart, Syringe, ClipboardList, Calendar, Receipt, Pill
 } from 'lucide-react';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
@@ -39,8 +39,8 @@ export default function Layout() {
 
   const ROLE_META = {
     super_admin:      { label: '⚡ Super Admin',       color: '#a855f7' },
-    facility_admin:   { label: '👑 Facility Admin',    color: '#10b981' },
-    admin:            { label: '👑 Admin',             color: '#10b981' },
+    facility_admin:   { label: isPharmacyOnly ? '👑 Pharmacy Admin' : '👑 Facility Admin',    color: '#10b981' },
+    admin:            { label: isPharmacyOnly ? '👑 Pharmacy Admin' : '👑 Admin',             color: '#10b981' },
     receptionist:     { label: '📋 Receptionist',     color: '#f97316' },
     cashier:          { label: '🧾 Cashier',          color: '#eab308' },
     sha_officer:      { label: '🏥 SHA Officer',      color: '#06b6d4' },
@@ -59,57 +59,43 @@ export default function Layout() {
     // Super Admin
     isSuperAdmin && { to: '/app/super-admin', icon: Globe, label: 'Facilities' },
 
-    // Facility Admin full menu
-    isAdmin && !isSuperAdmin && { to: '/app/dashboard',  icon: LayoutDashboard, label: 'Dashboard' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/patients',    icon: UserRound,        label: 'Patients' },
-    isAdmin && !isSuperAdmin && { to: '/app/users',       icon: Users,           label: 'Staff' },
+    // Overview
+    { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
 
-    isAdmin && !isSuperAdmin && { to: '/app/billing',     icon: DollarSign,       label: 'Billing' },
-    isAdmin && !isSuperAdmin && { to: '/app/pos',         icon: ShoppingCart,     label: 'Point of Sale', badge: cartCount > 0 ? cartCount : null },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/doctor',      icon: Stethoscope,      label: 'OPD Queue' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/triage',      icon: Activity,         label: 'Triage' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/lab',             icon: FlaskConical,  label: 'Lab' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/inpatient',   icon: BedDouble,        label: 'Inpatient' },
-    isAdmin && !isSuperAdmin && { to: '/app/products',    icon: Package,          label: 'Products' },
-    isAdmin && !isSuperAdmin && { to: '/app/stock',       icon: ShoppingBag,      label: 'Stock' },
-    isAdmin && !isSuperAdmin && { to: '/app/purchases',   icon: Truck,            label: 'Purchases' },
-    isAdmin && !isSuperAdmin && { to: '/app/suppliers',   icon: Building2,        label: 'Suppliers' },
-    isAdmin && !isSuperAdmin && { to: '/app/patient-payment-history', icon: Receipt, label: 'Patient Payment History' },
-    isAdmin && !isSuperAdmin && { to: '/app/finance',     icon: TrendingUp,       label: 'Finance' },
-    isAdmin && !isSuperAdmin && { to: '/app/reports',     icon: FileText,         label: 'Reports' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/lab/reports',     icon: FileText,      label: 'Lab Reports' },
-    isAdmin && !isSuperAdmin && !isPharmacyOnly && { to: '/app/doctor?tab=reports', icon: FileText,    label: 'OPD Reports' },
-    isAdmin && !isSuperAdmin && { to: '/app/expired',     icon: AlertTriangle,    label: 'Expired Drugs' },
-    isAdmin && !isSuperAdmin && { to: '/app/settings',    icon: Settings,         label: 'Settings' },
-    isAdmin && !isSuperAdmin && { to: "/app/service-prices", icon: DollarSign, label: "Price List" },
+    // Hospital-Only Clinical Items
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_register_patients')) && { to: '/app/patients', icon: UserRound, label: 'Patients' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_do_triage')) && { to: '/app/triage', icon: Activity, label: 'Triage Queue' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_do_consultation')) && { to: '/app/doctor', icon: Stethoscope, label: 'OPD Queue' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_manage_admissions')) && { to: '/app/inpatient', icon: BedDouble, label: 'Inpatient' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_manage_lab')) && { to: '/app/lab', icon: FlaskConical, label: 'Lab' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_manage_radiology')) && { to: '/app/radiology', icon: Camera, label: 'Radiology' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_manage_mch')) && { to: '/app/mch', icon: Baby, label: 'MCH' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_create_bills')) && { to: '/app/billing', icon: DollarSign, label: 'Billing' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_submit_sha_claims')) && { to: '/app/claims', icon: Shield, label: 'SHA Claims' },
+    !isPharmacyOnly && isAdmin && { to: '/app/service-prices', icon: DollarSign, label: 'Price List' },
 
-    // Permission-based items for non-admin roles
-    !isAdmin && hasPerm(user, 'can_register_patients')   && { to: '/app/patients',  icon: UserRound,     label: 'Patients' },
-    !isAdmin && hasPerm(user, 'can_manage_queue') && user.role !== 'doctor' && { to: '/app/billing',    icon: DollarSign,      label: 'Billing' },
-    !isAdmin && hasPerm(user, 'can_create_bills')        && { to: '/app/billing',   icon: DollarSign,    label: 'Billing' },
-    !isAdmin && hasPerm(user, 'can_access_pos')          && { to: '/app/pos',       icon: ShoppingCart,  label: 'Point of Sale', badge: cartCount > 0 ? cartCount : null },
-    !isAdmin && hasPerm(user, 'can_submit_sha_claims')   && { to: '/app/billing',   icon: Shield,        label: 'SHA Claims' },
-    !isAdmin && hasPerm(user, 'can_view_financial_reports') && user.role !== 'pharmacist' && { to: '/app/finance', icon: TrendingUp,   label: 'Finance' },
+    // Pharmacy & Counter
+    (isAdmin || hasPerm(user, 'can_access_pos')) && { to: '/app/pos', icon: ShoppingCart, label: 'Point of Sale', badge: cartCount > 0 ? cartCount : null },
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/dispense', icon: Pill, label: 'Dispense Prescriptions' },
+    (isAdmin || hasPerm(user, 'can_access_pos') || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/sales', icon: Receipt, label: 'Sales Records' },
 
-    !isAdmin && hasPerm(user, 'can_do_triage') && user.role !== 'doctor' && { to: '/app/triage',    icon: Activity,      label: 'Triage Queue' },
-    !isAdmin && hasPerm(user, 'can_manage_injections')   && { to: '/app/injection', icon: Activity,      label: 'Injection Room' },
-    !isAdmin && hasPerm(user, "can_request_radiology") && user.role !== 'doctor' && { to: "/app/radiology", icon: Camera, label: "Radiology" },
-    !isAdmin && hasPerm(user, 'can_manage_mch')          && { to: '/app/mch',       icon: Baby,          label: 'MCH' },
-    !isAdmin && hasPerm(user, 'can_do_consultation')     && { to: '/app/doctor',    icon: Stethoscope,   label: 'OPD Queue' },
-    !isAdmin && hasPerm(user, 'can_do_consultation')     && { to: '/app/doctor?tab=history', icon: FileText, label: 'Patient History' },
-    !isAdmin && hasPerm(user, 'can_do_consultation')     && { to: '/app/doctor?tab=reports', icon: FileText, label: 'OPD Reports' },
-    !isAdmin && hasPerm(user, 'can_manage_admissions')   && { to: '/app/inpatient', icon: BedDouble,     label: 'Inpatient Ward' },
-    !isAdmin && hasPerm(user, 'can_manage_lab')          && { to: '/app/lab',             icon: FlaskConical,  label: 'Lab Requests' },
-    !isAdmin && hasPerm(user, 'can_manage_lab')          && { to: '/app/lab/history',     icon: Clock,         label: 'Lab History' },
-    !isAdmin && hasPerm(user, 'can_manage_lab')          && { to: '/app/lab/reports',     icon: FileText,      label: 'Lab Reports' },
-    !isAdmin && hasPerm(user, 'can_manage_pharmacy')     && { to: '/app/dispense',  icon: ShoppingCart,  label: 'Dispense', badge: null },
-    !isAdmin && hasPerm(user, 'can_manage_pharmacy')     && { to: '/app/products',  icon: Package,       label: 'Products' },
-    !isAdmin && hasPerm(user, 'can_manage_pharmacy')     && { to: '/app/stock',     icon: ShoppingBag,   label: 'Stock' },
-    !isAdmin && hasPerm(user, 'can_manage_pharmacy')     && { to: '/app/purchases', icon: Truck,         label: 'Purchases' },
-    !isAdmin && hasPerm(user, 'can_manage_pharmacy')     && { to: '/app/expired',   icon: AlertTriangle, label: 'Expired Drugs' },
-    !isAdmin && hasPerm(user, 'can_manage_stock') && !hasPerm(user, 'can_manage_pharmacy') && { to: '/app/stock',     icon: ShoppingBag, label: 'Inventory' },
-    !isAdmin && hasPerm(user, 'can_manage_stock') && !hasPerm(user, 'can_manage_pharmacy') && { to: '/app/purchases', icon: Truck,       label: 'Purchases' },
-    !isAdmin && hasPerm(user, 'can_manage_stock') && !hasPerm(user, 'can_manage_pharmacy') && { to: '/app/suppliers', icon: Building2,   label: 'Suppliers' },
+    // Inventory & Stock
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/products', icon: Package, label: 'Products' },
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/stock', icon: ShoppingBag, label: 'Stock' },
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/purchases', icon: Truck, label: 'Purchases' },
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/suppliers', icon: Building2, label: 'Suppliers' },
+    (isAdmin || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/expired', icon: AlertTriangle, label: 'Expired Drugs' },
+
+    // Finance & Reports
+    (isAdmin || hasPerm(user, 'can_view_financial_reports')) && { to: '/app/finance', icon: TrendingUp, label: 'Finance' },
+    (isAdmin || hasPerm(user, 'can_view_financial_reports')) && { to: '/app/reports', icon: FileText, label: 'Reports' },
+    isAdmin && { to: '/app/reports/profit', icon: TrendingUp, label: 'Profit Report' },
+    isAdmin && { to: '/app/reports/sales', icon: FileText, label: 'Sales Summary' },
+
+    // Administration
+    (isAdmin || hasPerm(user, 'can_manage_users')) && { to: '/app/users', icon: Users, label: 'Staff' },
+    !isPharmacyOnly && (isAdmin || hasPerm(user, 'can_manage_users')) && { to: '/app/department/hr', icon: Users, label: 'HR & Payroll' },
+    isAdmin && { to: '/app/settings', icon: Settings, label: 'Settings' },
   ].filter(Boolean);
 
   // Build Grouped Navigation
@@ -123,18 +109,65 @@ export default function Layout() {
       ];
     }
 
+    // ─── STRICT STANDALONE PHARMACY ADMIN & STAFF NAVIGATION ───────────
+    if (isPharmacyOnly) {
+      return [
+        {
+          title: '📊 Overview',
+          items: [
+            { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+          ]
+        },
+        {
+          title: '💊 Pharmacy & Counter',
+          items: [
+            (isAdmin || hasPerm(user, 'can_access_pos')) && { to: '/app/pos', icon: ShoppingCart, label: 'Point of Sale (POS)', badge: cartCount > 0 ? cartCount : null },
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/dispense', icon: Pill, label: 'Dispense Prescriptions' },
+            (isAdmin || hasPerm(user, 'can_access_pos') || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/sales', icon: Receipt, label: 'Sales Records' },
+          ].filter(Boolean)
+        },
+        {
+          title: '📦 Inventory & Stock',
+          items: [
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/products', icon: Package, label: 'Products Catalog' },
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/stock', icon: ShoppingBag, label: 'Stock & Batches' },
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/purchases', icon: Truck, label: 'Purchase Orders' },
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy') || hasPerm(user, 'can_manage_stock')) && { to: '/app/suppliers', icon: Building2, label: 'Suppliers' },
+            (isAdmin || hasPerm(user, 'can_manage_pharmacy')) && { to: '/app/expired', icon: AlertTriangle, label: 'Expired Drugs' },
+          ].filter(Boolean)
+        },
+        {
+          title: '📈 Finance & Reports',
+          items: [
+            (isAdmin || hasPerm(user, 'can_view_financial_reports')) && { to: '/app/finance', icon: TrendingUp, label: 'Financial Overview' },
+            (isAdmin || hasPerm(user, 'can_view_financial_reports')) && { to: '/app/reports', icon: FileText, label: 'Reports Hub' },
+            isAdmin && { to: '/app/reports/profit', icon: TrendingUp, label: 'Profit Analysis' },
+            isAdmin && { to: '/app/reports/sales', icon: FileText, label: 'Daily Sales Report' },
+          ].filter(Boolean)
+        },
+        {
+          title: '👥 Administration',
+          items: [
+            (isAdmin || hasPerm(user, 'can_manage_users')) && { to: '/app/users', icon: Users, label: 'Staff Directory' },
+            isAdmin && { to: '/app/settings', icon: Settings, label: 'Pharmacy Settings' },
+          ].filter(Boolean)
+        }
+      ].filter(group => group.items.length > 0);
+    }
+
+    // ─── HOSPITAL FACILITY ADMIN & STAFF NAVIGATION ────────────────────
     const groups = [];
 
     // 1. Overview & Patient Care
     const careItems = [
       (isAdmin || hasPerm(user, 'can_access_dashboard')) && { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      (isAdmin || hasPerm(user, 'can_register_patients')) && user?.role !== 'doctor' && user?.role !== 'clinical_officer' && !isPharmacyOnly && { to: '/app/patients', icon: UserRound, label: 'Patients' },
-      (isAdmin || hasPerm(user, 'can_do_triage')) && user?.role !== 'doctor' && user?.role !== 'clinical_officer' && !isPharmacyOnly && { to: '/app/triage', icon: Activity, label: 'Triage Queue' },
-      (isAdmin || hasPerm(user, 'can_do_consultation')) && !isPharmacyOnly && { to: '/app/doctor', icon: Stethoscope, label: 'OPD Queue' },
-      (isAdmin || hasPerm(user, 'can_do_consultation') || hasPerm(user, 'can_manage_lab') || hasPerm(user, 'can_manage_radiology')) && !isPharmacyOnly && { to: '/app/orders', icon: ClipboardList, label: 'Order Tracking' },
-      (isAdmin || hasPerm(user, 'can_do_consultation') || hasPerm(user, 'can_view_clinical_reports')) && !isPharmacyOnly && { to: '/app/doctor?tab=history', icon: Clock, label: 'Patient History' },
+      (isAdmin || hasPerm(user, 'can_register_patients')) && user?.role !== 'doctor' && user?.role !== 'clinical_officer' && { to: '/app/patients', icon: UserRound, label: 'Patients' },
+      (isAdmin || hasPerm(user, 'can_do_triage')) && user?.role !== 'doctor' && user?.role !== 'clinical_officer' && { to: '/app/triage', icon: Activity, label: 'Triage Queue' },
+      (isAdmin || hasPerm(user, 'can_do_consultation')) && { to: '/app/doctor', icon: Stethoscope, label: 'OPD Queue' },
+      (isAdmin || hasPerm(user, 'can_do_consultation') || hasPerm(user, 'can_manage_lab') || hasPerm(user, 'can_manage_radiology')) && { to: '/app/orders', icon: ClipboardList, label: 'Order Tracking' },
+      (isAdmin || hasPerm(user, 'can_do_consultation') || hasPerm(user, 'can_view_clinical_reports')) && { to: '/app/doctor?tab=history', icon: Clock, label: 'Patient History' },
       (isAdmin || hasPerm(user, 'can_manage_injections')) && { to: '/app/injection', icon: Activity, label: 'Injection Room' },
-      (isAdmin || hasPerm(user, 'can_manage_admissions') || hasPerm(user, 'can_manage_ward_activities')) && !isPharmacyOnly && { to: '/app/inpatient', icon: BedDouble, label: 'Inpatient Ward' },
+      (isAdmin || hasPerm(user, 'can_manage_admissions') || hasPerm(user, 'can_manage_ward_activities')) && { to: '/app/inpatient', icon: BedDouble, label: 'Inpatient Ward' },
     ].filter(Boolean);
     if (careItems.length > 0) groups.push({ title: '🏠 Clinical Care', items: careItems });
 
@@ -155,7 +188,7 @@ export default function Layout() {
 
     // 3. Radiology Department
     const radItems = [
-      (isAdmin || hasPerm(user, 'can_manage_radiology') || user?.role === 'radiologist' || user?.role === 'radiology_tech') && !isPharmacyOnly && { to: '/app/radiology', icon: Camera, label: 'Radiology' },
+      (isAdmin || hasPerm(user, 'can_manage_radiology') || user?.role === 'radiologist' || user?.role === 'radiology_tech') && { to: '/app/radiology', icon: Camera, label: 'Radiology' },
     ].filter(Boolean);
     if (radItems.length > 0) groups.push({ title: '📸 Radiology', items: radItems });
 
@@ -190,7 +223,7 @@ export default function Layout() {
     ].filter(Boolean);
     if (billingItems.length > 0) groups.push({ title: '💳 Billing & Claims', items: billingItems });
 
-    // 6. Reports & Analytics
+    // 7. Reports & Analytics
     const reportItems = [
       (isAdmin || hasPerm(user, 'can_view_financial_reports')) && { to: '/app/reports', icon: FileText, label: 'Reports Hub' },
       isAdmin && { to: '/app/reports/profit', icon: TrendingUp, label: 'Profit Report' },
@@ -198,7 +231,7 @@ export default function Layout() {
     ].filter(Boolean);
     if (reportItems.length > 0) groups.push({ title: '📊 Reports & Analytics', items: reportItems });
 
-    // 7. Administration
+    // 8. Administration
     const adminItems = [
       (isAdmin || hasPerm(user, 'can_manage_users')) && { to: '/app/users', icon: Users, label: 'Staff Directory' },
       (isAdmin || hasPerm(user, 'can_manage_users')) && { to: '/app/department/hr', icon: Users, label: 'HR & Payroll' },
@@ -244,21 +277,23 @@ export default function Layout() {
         {user?.pharmacy?.logo_url && !isSuperAdmin
           ? <img src={user.pharmacy.logo_url} alt="logo" style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 9, background: 'white', padding: 2, flexShrink: 0 }} />
           : <div style={{ width: 34, height: 34, background: 'var(--accent)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 16px rgba(16,185,129,0.3)', flexShrink: 0 }}>
-              <Activity size={18} color="#0F1612" strokeWidth={2.5} />
+              {isPharmacyOnly ? <Pill size={18} color="#0F1612" strokeWidth={2.5} /> : <Activity size={18} color="#0F1612" strokeWidth={2.5} />}
             </div>
         }
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{user?.pharmacy?.name || 'Medicare HMS'}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{user?.pharmacy?.name || (isPharmacyOnly ? 'Retail Pharmacy' : 'Medicare HMS')}</div>
           <div style={{ fontSize: 9, color: 'var(--text-muted)', display: 'flex', gap: 4, alignItems: 'center' }}>
             <span>v2.1.0</span>
-            <span style={{ color: 'var(--accent)', background: 'var(--accent-soft)', padding: '1px 4px', borderRadius: 3, fontWeight: 700, fontSize: 8 }}>ENTERPRISE</span>
+            <span style={{ color: 'var(--accent)', background: 'var(--accent-soft)', padding: '1px 4px', borderRadius: 3, fontWeight: 700, fontSize: 8 }}>
+              {isPharmacyOnly ? 'PHARMACY POS' : 'HOSPITAL HMS'}
+            </span>
           </div>
         </div>
       </div>
 
       {user?.pharmacy?.name && !isSuperAdmin && (
         <div style={{ margin: '0 4px 10px', padding: '6px 10px', background: 'var(--accent-soft)', borderRadius: 8, border: '1px solid rgba(16,185,129,0.2)' }}>
-          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Facility</div>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{isPharmacyOnly ? 'Retail Pharmacy' : 'Hospital Facility'}</div>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.pharmacy.name}</div>
         </div>
       )}

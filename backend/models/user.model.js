@@ -35,8 +35,12 @@ class UserModel {
     let query = `
       SELECT u.id, u.full_name, u.email, u.role, u.is_active, u.pharmacy_id,
              u.last_login, u.created_at, u.password, u.permissions,
-             u.dha_license_number, u.professional_title
-      FROM users u WHERE u.id = $1
+             u.dha_license_number, u.professional_title,
+             COALESCE(p.facility_type, 'hospital') AS facility_type,
+             p.name AS pharmacy_name
+      FROM users u
+      LEFT JOIN pharmacies p ON u.pharmacy_id::text = p.id::text
+      WHERE u.id = $1
     `;
     const params = [id];
     if (pharmacy_id) { params.push(pharmacy_id); query += ` AND u.pharmacy_id = $2`; }

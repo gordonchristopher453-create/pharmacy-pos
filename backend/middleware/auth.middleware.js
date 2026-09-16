@@ -95,4 +95,15 @@ const requirePharmacy = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, authorize, requirePermission, requireAnyPermission, superAdminOnly, requirePharmacy };
+const requireHospitalFacility = (req, res, next) => {
+  if (req.user?.is_super_admin) return next();
+  if (req.user?.facility_type === 'pharmacy') {
+    return res.status(403).json({
+      success: false,
+      message: 'This module is restricted to hospital facilities and is not available for standalone pharmacies.'
+    });
+  }
+  next();
+};
+
+module.exports = { protect, authorize, requirePermission, requireAnyPermission, superAdminOnly, requirePharmacy, requireHospitalFacility };

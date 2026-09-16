@@ -53,21 +53,30 @@ import MCHPatientRecord from "./pages/mch/MCHPatientRecord";
 import MCHHistory from "./pages/mch/MCHHistory";
 import MCHStockPage from "./pages/mch/MCHStockPage";
 
-const ProtectedRoute = ({ children, roles }) => {
+const ProtectedRoute = ({ children, roles, hospitalOnly = false }) => {
   const { user } = useSelector(state => state.auth);
   if (!user) return <Navigate to="/landing" replace />;
   if (user.role === 'super_admin') return children;
+  
+  const isPharmacyOnly = user?.pharmacy?.facility_type === 'pharmacy';
+  if (hospitalOnly && isPharmacyOnly) {
+    return <Navigate to="/app/dashboard" replace />;
+  }
+
   if (roles) {
     const userRole = user.role;
     const isAllowed = roles.includes(userRole) ||
       (roles.includes('facility_admin') && userRole === 'admin') ||
       (roles.includes('admin') && userRole === 'facility_admin');
-    if (!isAllowed) return <Navigate to={getDefaultRoute(userRole)} replace />;
+    if (!isAllowed) return <Navigate to={getDefaultRoute(userRole, isPharmacyOnly)} replace />;
   }
   return children;
 };
 
-const getDefaultRoute = (role) => {
+const getDefaultRoute = (role, isPharmacyOnly = false) => {
+  if (isPharmacyOnly && role !== 'super_admin') {
+    return '/app/dashboard';
+  }
   switch(role) {
     case 'super_admin': return '/app/super-admin';
     case 'facility_admin':
@@ -159,16 +168,16 @@ export default function App() {
           </Route>
 
           {/* Staff direct routes */}
-          <Route path="patients"  element={<ProtectedRoute roles={["receptionist","pharmacist","facility_admin","admin","nurse","doctor","cashier","accountant"]}><ErrorBoundary><PatientsPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="injection" element={<ProtectedRoute roles={['nurse','facility_admin','admin','doctor']}><ErrorBoundary><InjectionPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="radiology" element={<ProtectedRoute roles={["nurse","doctor","radiologist","facility_admin","admin"]}><ErrorBoundary><RadiologyPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="triage"    element={<ProtectedRoute roles={['nurse','facility_admin','admin','doctor','receptionist']}><ErrorBoundary><TriagePage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="lab"          element={<ProtectedRoute roles={['lab_technician','nurse','facility_admin','admin','doctor']}><ErrorBoundary><LabPage key="requests" /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="lab/history"   element={<ProtectedRoute roles={['lab_technician','facility_admin','admin']}><ErrorBoundary><LabPage key="history" /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="lab/reports"   element={<ProtectedRoute roles={['lab_technician','facility_admin','admin']}><ErrorBoundary><LabPage key="reports" /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="doctor"    element={<ProtectedRoute roles={['doctor','facility_admin','admin']}><ErrorBoundary><DoctorPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="special-clinics" element={<ProtectedRoute roles={['doctor','nurse','facility_admin','admin']}><ErrorBoundary><SpecialClinicsPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="orders" element={<ProtectedRoute roles={['doctor','nurse','lab_technician','facility_admin','admin','radiologist','pharmacist']}><ErrorBoundary><OrderManagementPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="patients"  element={<ProtectedRoute hospitalOnly={true} roles={["receptionist","pharmacist","facility_admin","admin","nurse","doctor","cashier","accountant"]}><ErrorBoundary><PatientsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="injection" element={<ProtectedRoute hospitalOnly={true} roles={['nurse','facility_admin','admin','doctor']}><ErrorBoundary><InjectionPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="radiology" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","radiologist","facility_admin","admin"]}><ErrorBoundary><RadiologyPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="triage"    element={<ProtectedRoute hospitalOnly={true} roles={['nurse','facility_admin','admin','doctor','receptionist']}><ErrorBoundary><TriagePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="lab"          element={<ProtectedRoute hospitalOnly={true} roles={['lab_technician','nurse','facility_admin','admin','doctor']}><ErrorBoundary><LabPage key="requests" /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="lab/history"   element={<ProtectedRoute hospitalOnly={true} roles={['lab_technician','facility_admin','admin']}><ErrorBoundary><LabPage key="history" /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="lab/reports"   element={<ProtectedRoute hospitalOnly={true} roles={['lab_technician','facility_admin','admin']}><ErrorBoundary><LabPage key="reports" /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="doctor"    element={<ProtectedRoute hospitalOnly={true} roles={['doctor','facility_admin','admin']}><ErrorBoundary><DoctorPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="special-clinics" element={<ProtectedRoute hospitalOnly={true} roles={['doctor','nurse','facility_admin','admin']}><ErrorBoundary><SpecialClinicsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="orders" element={<ProtectedRoute hospitalOnly={true} roles={['doctor','nurse','lab_technician','facility_admin','admin','radiologist','pharmacist']}><ErrorBoundary><OrderManagementPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="pos"       element={<ProtectedRoute roles={['pharmacist','facility_admin','admin','cashier','receptionist']}><ErrorBoundary><POSPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="dispense"  element={<ProtectedRoute roles={['pharmacist','facility_admin','admin','cashier']}><ErrorBoundary><DispensePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="products"  element={<ProtectedRoute roles={['pharmacist','facility_admin','admin','lab_technician']}><ErrorBoundary><ProductsPage /></ErrorBoundary></ProtectedRoute>} />
@@ -177,33 +186,33 @@ export default function App() {
           <Route path="suppliers" element={<ProtectedRoute roles={['pharmacist','lab_technician','facility_admin','admin']}><ErrorBoundary><SuppliersPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="sales"     element={<ProtectedRoute roles={['pharmacist','facility_admin','admin','cashier','accountant']}><ErrorBoundary><SalesPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="expired"   element={<ProtectedRoute roles={['pharmacist','facility_admin','admin']}><ErrorBoundary><ExpiredDrugsPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="inpatient" element={<ProtectedRoute roles={['doctor','nurse','facility_admin','admin','lab_technician','pharmacist','receptionist','cashier']}><ErrorBoundary><InpatientPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="billing" element={<ProtectedRoute roles={["receptionist","pharmacist","facility_admin","admin","accountant","cashier","doctor","nurse"]}><ErrorBoundary><BillingPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="patient-payment-history" element={<ProtectedRoute roles={["receptionist","pharmacist","facility_admin","admin","accountant","cashier"]}><ErrorBoundary><PatientPaymentHistoryPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="claims" element={<ProtectedRoute roles={["receptionist","accountant","facility_admin","admin","doctor","cashier"]}><ErrorBoundary><ClaimsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="inpatient" element={<ProtectedRoute hospitalOnly={true} roles={['doctor','nurse','facility_admin','admin','lab_technician','pharmacist','receptionist','cashier']}><ErrorBoundary><InpatientPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="billing" element={<ProtectedRoute hospitalOnly={true} roles={["receptionist","pharmacist","facility_admin","admin","accountant","cashier","doctor","nurse"]}><ErrorBoundary><BillingPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="patient-payment-history" element={<ProtectedRoute hospitalOnly={true} roles={["receptionist","pharmacist","facility_admin","admin","accountant","cashier"]}><ErrorBoundary><PatientPaymentHistoryPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="claims" element={<ProtectedRoute hospitalOnly={true} roles={["receptionist","accountant","facility_admin","admin","doctor","cashier"]}><ErrorBoundary><ClaimsPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="finance"   element={<ProtectedRoute roles={["accountant","pharmacist","facility_admin","admin","cashier"]}><ErrorBoundary><FinancePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="reports"   element={<ProtectedRoute roles={['accountant','facility_admin','admin','receptionist','pharmacist','lab_technician','cashier']}><ErrorBoundary><ReportsPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="users"     element={<ProtectedRoute roles={['facility_admin','admin','accountant']}><ErrorBoundary><UsersPage /></ErrorBoundary></ProtectedRoute>} />
           
           <Route path="reports/profit" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><ProfitReportPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="reports/sales" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><SalesSummaryPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="reports/lab" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><LabSalesPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="service-prices" element={<ProtectedRoute roles={["facility_admin","admin"]}><ErrorBoundary><ServicePricesPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="reports/lab" element={<ProtectedRoute hospitalOnly={true} roles={["facility_admin","admin"]}><ErrorBoundary><LabSalesPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="service-prices" element={<ProtectedRoute hospitalOnly={true} roles={["facility_admin","admin"]}><ErrorBoundary><ServicePricesPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="settings"  element={<ProtectedRoute roles={['facility_admin','admin']}><ErrorBoundary><SettingsPage /></ErrorBoundary></ProtectedRoute>} />
           {/* MCH Routes */}
-          <Route path="mch" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHDashboard /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/anc" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><ANCPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/anc/:id" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><ANCPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/pnc" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><PNCPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/cwc" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><CWCPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/immunization" element={<ProtectedRoute roles={["nurse","facility_admin","admin"]}><ErrorBoundary><ImmunizationPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/family-planning" element={<ProtectedRoute roles={["nurse","facility_admin","admin"]}><ErrorBoundary><FamilyPlanningPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/delivery" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><DeliveryPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/reports" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHReports /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/appointments" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHAppointments /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/history" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHHistory /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/patient/:patientId" element={<ProtectedRoute roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHPatientRecord /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="mch/stock" element={<ProtectedRoute roles={["nurse","facility_admin","admin"]}><ErrorBoundary><MCHStockPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHDashboard /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/anc" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><ANCPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/anc/:id" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><ANCPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/pnc" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><PNCPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/cwc" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><CWCPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/immunization" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","facility_admin","admin"]}><ErrorBoundary><ImmunizationPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/family-planning" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","facility_admin","admin"]}><ErrorBoundary><FamilyPlanningPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/delivery" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><DeliveryPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/reports" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHReports /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/appointments" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHAppointments /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/history" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHHistory /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/patient/:patientId" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","doctor","facility_admin","admin"]}><ErrorBoundary><MCHPatientRecord /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="mch/stock" element={<ProtectedRoute hospitalOnly={true} roles={["nurse","facility_admin","admin"]}><ErrorBoundary><MCHStockPage /></ErrorBoundary></ProtectedRoute>} />
         </Route>
         <Route path="*" element={<ErrorBoundary><Navigate to="/" replace /></ErrorBoundary>} />
       </Routes>

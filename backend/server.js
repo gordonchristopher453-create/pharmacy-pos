@@ -9,7 +9,7 @@ require('dotenv').config();
 
 const { connectDB } = require('./config/db');
 const { errorHandler, notFound } = require('./middleware/error.middleware');
-const { protect, requirePharmacy } = require('./middleware/auth.middleware');
+const { protect, requirePharmacy, requireHospitalFacility } = require('./middleware/auth.middleware');
 const initSocket = require('./sockets/socket.handler');
 const logger = require('./utils/logger');
 const { checkExpiringSubscriptions } = require('./utils/expiryChecker');
@@ -76,37 +76,37 @@ app.use('/api/consultations',  protect, requirePharmacy, require('./routes/consu
 app.use('/api/billing',        protect, requirePharmacy, require('./routes/billing.routes'));
 
 // Lab - mount on BOTH paths frontend might call
-app.use('/api/lab',            protect, requirePharmacy, require('./routes/lab.routes'));
-app.use('/api/lab-requests',   protect, requirePharmacy, require('./routes/lab_management.routes'));
-app.use('/api/labs',           protect, requirePharmacy, require('./routes/lab.routes'));
+app.use('/api/lab',            protect, requirePharmacy, requireHospitalFacility, require('./routes/lab.routes'));
+app.use('/api/lab-requests',   protect, requirePharmacy, requireHospitalFacility, require('./routes/lab_management.routes'));
+app.use('/api/labs',           protect, requirePharmacy, requireHospitalFacility, require('./routes/lab.routes'));
 
 // Prescriptions
 
 // Other departments
 app.use('/api/procedures',     protect, requirePharmacy, require('./routes/procedure.routes'));
-app.use('/api/injection-room', protect, requirePharmacy, require('./routes/injection.routes'));
-app.use('/api/inpatient',      protect, requirePharmacy, require('./routes/inpatient.routes'));
+app.use('/api/injection-room', protect, requirePharmacy, requireHospitalFacility, require('./routes/injection.routes'));
+app.use('/api/inpatient',      protect, requirePharmacy, requireHospitalFacility, require('./routes/inpatient.routes'));
 app.use('/api/icd10',          require('./routes/icd.routes'));
 app.use('/api/icd11',          require('./routes/icd.routes'));
 app.use('/api/icd',            require('./routes/icd.routes'));
 app.use('/api/ai',             protect, requirePharmacy, require('./routes/ai.routes'));
 
 // Special Clinics
-app.use('/api/special-clinics', protect, requirePharmacy, require('./routes/specialClinic.routes'));
+app.use('/api/special-clinics', protect, requirePharmacy, requireHospitalFacility, require('./routes/specialClinic.routes'));
 
 // Clinical Decision Support & Enterprise Order Management
 app.use('/api/cds',            protect, requirePharmacy, require('./routes/cds.routes'));
 app.use('/api/orders',         protect, requirePharmacy, require('./routes/orders.routes'));
 
 // MCH
-app.use('/api/anc',            protect, requirePharmacy, require('./routes/anc.routes'));
-app.use('/api/pnc',            protect, requirePharmacy, require('./routes/pnc.routes'));
-app.use('/api/cwc',            protect, requirePharmacy, require('./routes/cwc.routes'));
-app.use('/api/delivery',       protect, requirePharmacy, require('./routes/delivery.routes'));
-app.use('/api/mch/delivery',   protect, requirePharmacy, require('./routes/delivery.routes'));
-app.use('/api/immunization',   protect, requirePharmacy, require('./routes/immunization.routes'));
-app.use('/api/mch',            protect, requirePharmacy, require('./routes/mch.routes'));
-app.use('/api/mch-stock',      protect, requirePharmacy, require('./routes/mch_stock.routes'));
+app.use('/api/anc',            protect, requirePharmacy, requireHospitalFacility, require('./routes/anc.routes'));
+app.use('/api/pnc',            protect, requirePharmacy, requireHospitalFacility, require('./routes/pnc.routes'));
+app.use('/api/cwc',            protect, requirePharmacy, requireHospitalFacility, require('./routes/cwc.routes'));
+app.use('/api/delivery',       protect, requirePharmacy, requireHospitalFacility, require('./routes/delivery.routes'));
+app.use('/api/mch/delivery',   protect, requirePharmacy, requireHospitalFacility, require('./routes/delivery.routes'));
+app.use('/api/immunization',   protect, requirePharmacy, requireHospitalFacility, require('./routes/immunization.routes'));
+app.use('/api/mch',            protect, requirePharmacy, requireHospitalFacility, require('./routes/mch.routes'));
+app.use('/api/mch-stock',      protect, requirePharmacy, requireHospitalFacility, require('./routes/mch_stock.routes'));
 app.use('/api/prescriptions', require('./routes/pharmacy.routes'));
 app.use('/api/service-prices', require('./routes/service-prices.routes'));
 app.use('/api', require('./routes/kenya_medical.routes'));
