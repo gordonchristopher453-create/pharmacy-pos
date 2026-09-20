@@ -114,15 +114,17 @@ const getActiveVisits = async (req, res) => {
 
 const updateVisitStatus = async (req, res) => {
   try {
+    // Force department to 'triage' if status is triage-related
+    if (['triaged', 'WAITING_TRIAGE', 'IN_TRIAGE', 'waiting_triage', 'send_triage', 'to_triage'].includes(req.body.status)) {
+      req.body.status = 'WAITING_TRIAGE';
+      req.body.department = 'triage';
+    }
+
     // 🚫 Receptionist can only send patient to triage
     if (req.user.role === 'receptionist' || req.user.role === 'reception') {
-      const allowed = ['triaged', 'waiting', 'open', 'REGISTERED', 'WAITING_TRIAGE', 'IN_TRIAGE'];
+      const allowed = ['triaged', 'waiting', 'open', 'REGISTERED', 'WAITING_TRIAGE', 'IN_TRIAGE', 'waiting_triage'];
       if (!allowed.includes(req.body.status)) {
         return errorResponse(res, 403, 'Receptionist can only send patient to triage. Nurse must forward to OPD/MCH.');
-      }
-      // Force department to 'triage' if status is triage-related
-      if (['triaged', 'WAITING_TRIAGE', 'IN_TRIAGE'].includes(req.body.status)) {
-        req.body.department = 'triage';
       }
     }
 
@@ -146,7 +148,10 @@ const updateVisitStatus = async (req, res) => {
     const visit = await VisitModel.updateStatus(req.params.id, req.pharmacy_id, req.body.status, req.body.mch_service, req.body.department);
     if (!visit) return errorResponse(res, 404, 'Visit not found');
     const io = req.app.get('io');
-    if (io) io.emit(`visit_updated_${req.pharmacy_id}`, { visit_id: visit.id, status: visit.status });
+    if (io) {
+      io.emit(`visit_updated_${req.pharmacy_id}`, { visit_id: visit.id, status: visit.status });
+      io.emit(`queue_update_${req.pharmacy_id}`, { visit_id: visit.id, status: visit.status });
+    }
     return successResponse(res, 200, 'Visit updated', visit);
   } catch (e) { return errorResponse(res, 400, e.message); }
 };

@@ -41,9 +41,65 @@ const createPatient = async (req, res) => {
         return errorResponse(res, 400, `Patient with this phone number is already registered (${existing.rows[0].full_name} - ${existing.rows[0].patient_number}).`);
       }
     }
-    const patient = await PatientModel.create({ ...req.body, pharmacy_id: req.pharmacy_id });
+
+    const { check_in, visit: visitData, ...patientData } = req.body;
+    const patient = await PatientModel.create({ ...patientData, pharmacy_id: req.pharmacy_id });
     logger.info('Patient registered: ' + patient.patient_number);
-    return successResponse(res, 201, 'Patient registered', patient);
+
+    let visit = null;
+    if (check_in || visitData) {
+      const v = visitData || {};
+      const department = v.department || 'opd';
+      const visit_type = v.visit_type || (department === 'mch' ? 'mch' : 'routine');
+      const priority = v.priority || 'normal';
+      const consultation_fee = v.consultation_fee !== undefined ? parseFloat(v.consultation_fee || 0) : 500;
+      const fee_paid = !!v.fee_paid;
+      const payment_method = v.payment_method || (patient.insurance_provider && patient.insurance_provider !== 'cash' ? 'insurance' : 'cash');
+      const initialStatus = v.status || (visit_type === 'mch' || department === 'mch' ? 'mch' : 'WAITING_TRIAGE');
+
+      visit = await VisitModel.create({
+        pharmacy_id: req.pharmacy_id,
+        patient_id: patient.id,
+        visit_type,
+        priority,
+        chief_complaint: v.chief_complaint || null,
+        notes: v.notes || null,
+        consultation_fee,
+        fee_paid,
+        payment_method,
+        mch_service: v.mch_service || null,
+        department: department || (visit_type === 'mch' ? 'mch' : 'triage'),
+        status: initialStatus,
+        created_by: req.user?.id || null,
+      });
+
+      if (consultation_fee > 0) {
+        try {
+          await pool.query(`
+            INSERT INTO billing_items (facility_id, visit_id, patient_id, item_name, item_type, unit_price, quantity, status, payment_method, paid_at)
+            VALUES ($1,$2,$3,'Consultation Fee','consultation',$4,1,$5,$6,$7)
+          `, [
+            req.pharmacy_id,
+            visit.id,
+            patient.id,
+            consultation_fee,
+            fee_paid ? 'paid' : 'pending',
+            fee_paid ? payment_method : null,
+            fee_paid ? new Date() : null
+          ]);
+        } catch (bErr) {
+          logger.error('Failed to create consultation fee billing item on patient registration:', bErr.message);
+        }
+      }
+
+      const io = req.app.get('io');
+      if (io) {
+        io.emit(`visit_opened_${req.pharmacy_id}`, { visit_id: visit.id, visit_type, patient_id: patient.id });
+        io.emit(`queue_update_${req.pharmacy_id}`, { visit_id: visit.id, status: visit.status, action: 'create' });
+      }
+    }
+
+    return successResponse(res, 201, 'Patient registered', { ...patient, visit });
   } catch (error) {
     logger.error('Create patient error:', error.message);
     return errorResponse(res, 500, error.message || 'Failed to register patient');
@@ -193,7 +249,13 @@ const createVisit = async (req, res) => {
 const getVisits = async (req, res) => {
   try {
     const { status, visit_type, date, date_from, date_to, limit, offset } = req.query;
-    const targetDate = (!date && !date_from && !date_to) ? new Date().toISOString().split('T')[0] : date;
+    let targetDate = date;
+    if (date === 'all' || date === '') {
+      targetDate = null;
+    } else if (!date && !date_from && !date_to) {
+      const isPendingQueue = status && (status.includes('WAITING_TRIAGE') || status.includes('waiting') || status === 'active' || status === 'opd_queue');
+      targetDate = isPendingQueue ? null : new Date().toISOString().split('T')[0];
+    }
     const visits = await VisitModel.findAll({ 
       pharmacy_id: req.pharmacy_id, 
       status, 
@@ -214,7 +276,11 @@ const getVisits = async (req, res) => {
 
 const updateVisitStatus = async (req, res) => {
   try {
-    const { status, mch_service } = req.body;
+    let { status, mch_service, department } = req.body;
+    if (status && ['triaged', 'send_triage', 'to_triage', 'waiting_triage'].includes(status.toLowerCase())) {
+      status = 'WAITING_TRIAGE';
+      if (!department) department = 'triage';
+    }
     if (status === 'mch' && mch_service) {
       try {
         const mchFees = { mch_anc: 500, mch_pnc: 500, mch_cwc: 300, mch_immunization: 200, mch_fp: 300 };
@@ -264,7 +330,7 @@ const updateVisitStatus = async (req, res) => {
         }
       } catch(e) { logger.error('MCH billing error:', e.message); }
     }
-    const visit = await VisitModel.updateStatus(req.params.id, req.pharmacy_id, status, mch_service, req.body.department);
+    const visit = await VisitModel.updateStatus(req.params.id, req.pharmacy_id, status, mch_service, department);
     if (!visit) return errorResponse(res, 404, 'Visit not found');
     const io = req.app.get('io');
     if (io) io.emit('queue_update_' + req.pharmacy_id, { visit_id: req.params.id, status });

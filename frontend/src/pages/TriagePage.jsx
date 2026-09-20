@@ -105,7 +105,7 @@ export default function TriagePage() {
   const [loading, setLoading] = useState(true);
   const [histLoading, setHistLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [triageDate, setTriageDate] = useState(new Date().toISOString().split('T')[0]);
+  const [triageDate, setTriageDate] = useState('');
   const [histSearch, setHistSearch] = useState('');
   const [histDate, setHistDate] = useState(new Date().toISOString().split('T')[0]);
   const [selected, setSelected] = useState(null);
@@ -194,10 +194,9 @@ export default function TriagePage() {
   const fetchVisits = async () => {
     setLoading(true);
     try {
-      const d = triageDate || new Date().toISOString().split('T')[0];
       const params = {
         status: 'WAITING_TRIAGE,waiting_triage,triage,IN_TRIAGE,waiting,open,triaged,REGISTERED,registered',
-        date: d
+        date: triageDate || 'all'
       };
       const res = await api.get('/patients/visits', { params });
       setVisits(res.data.data.visits || []);
@@ -491,14 +490,15 @@ export default function TriagePage() {
                       className="text-[10px] text-amber-400 hover:underline font-mono"
                       title="Show all pending queue across all dates"
                     >
-                      Show All
+                      Show All Pending
                     </button>
                   ) : (
                     <button
                       onClick={() => setTriageDate(new Date().toISOString().split('T')[0])}
                       className="text-[10px] text-[var(--accent)] hover:underline font-mono"
+                      title="Filter to today's registrations only"
                     >
-                      Today
+                      Filter Today
                     </button>
                   )}
                 </div>

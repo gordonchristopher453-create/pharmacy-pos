@@ -272,9 +272,10 @@ export default function PatientsPage() {
   });
   const [showQuickPickerModal, setShowQuickPickerModal] = useState(false);
   const [quickPickerSearch, setQuickPickerSearch] = useState('');
+  const [registerAndTriage, setRegisterAndTriage] = useState(true);
 
   const { user } = useSelector(state => state.auth);
-  const isReceptionist = user?.role === 'receptionist';
+  const isReceptionist = ['receptionist', 'reception', 'facility_admin', 'admin', 'nurse'].includes(user?.role);
 
   const pf  = (k,v) => setPatientForm(p => ({...p,[k]:v}));
   const vf  = (k,v) => setVisitForm(p => ({...p,[k]:v}));
@@ -383,6 +384,8 @@ export default function PatientsPage() {
 
   const handleOpenCheckIn = (patient) => {
     if (!patient) return;
+    setSelectedPatient(patient);
+    setShowProfileModal(false);
     const pastVisits = patient.visits || [];
     if (pastVisits.length > 0) {
       const lastVisit = pastVisits[0];
@@ -431,17 +434,38 @@ export default function PatientsPage() {
     try {
       const payload = {
         ...patientForm,
-        national_id: patientForm.id_type === 'national_id' ? patientForm.national_id : (patientForm.id_type === 'passport' ? patientForm.passport_number : patientForm.national_id || null)
+        national_id: patientForm.id_type === 'national_id' ? patientForm.national_id : (patientForm.id_type === 'passport' ? patientForm.passport_number : patientForm.national_id || null),
+        check_in: registerAndTriage,
+        visit: registerAndTriage ? {
+          department: visitForm.department || 'opd',
+          priority: visitForm.priority || 'normal',
+          consultation_fee: visitForm.consultation_fee !== undefined ? parseFloat(visitForm.consultation_fee || 0) : 500,
+          payment_method: visitForm.payment_method || (patientForm.insurance_provider && patientForm.insurance_provider !== 'cash' ? 'insurance' : 'cash'),
+          fee_paid: visitForm.fee_paid || false,
+          chief_complaint: visitForm.chief_complaint || 'Initial Registration & Triage',
+          notes: visitForm.notes || ''
+        } : null
       };
       const res = await api.post('/patients', payload);
-      toast.success(`✅ Patient registered: ${res.data.data.patient_number}`);
-      setShowRegisterModal(false);
-      setPatientForm(EMPTY_PATIENT);
-      setVisitForm(EMPTY_VISIT);
-      setRegisterStep(1);
-      fetchPatients();
-      fetchPatientProfile(res.data.data.id); 
-      setShowVisitModal(true);
+      const registeredPatient = res.data.data;
+
+      if (registerAndTriage) {
+        toast.success(`🎉 ${registeredPatient.full_name} registered & dispatched to Triage Queue!`);
+        setShowRegisterModal(false);
+        setPatientForm(EMPTY_PATIENT);
+        setVisitForm(EMPTY_VISIT);
+        setRegisterStep(1);
+        fetchPatients();
+        fetchQueue();
+      } else {
+        toast.success(`✅ Patient registered: ${registeredPatient.patient_number}`);
+        setShowRegisterModal(false);
+        setPatientForm(EMPTY_PATIENT);
+        setVisitForm(EMPTY_VISIT);
+        setRegisterStep(1);
+        fetchPatients();
+        handleOpenCheckIn(registeredPatient);
+      }
     } catch (e) { toast.error(e.response?.data?.message || 'Failed to register patient'); }
     finally { setSaving(false); }
   };
@@ -1033,8 +1057,8 @@ export default function PatientsPage() {
                     </Btn>
                     
                     {isReceptionist && (['waiting', 'WAITING_TRIAGE', 'waiting_triage', 'open', 'REGISTERED'].includes(v.status)) && (
-                      <Btn size="sm" variant="ghost" onClick={() => handleUpdateStatus(v.id, 'triaged')} className="text-[var(--info)] border-[var(--info)]/30 hover:bg-[var(--info)]/10" icon={Activity}>
-                        Send to Triage
+                      <Btn size="sm" variant="ghost" onClick={() => handleUpdateStatus(v.id, 'WAITING_TRIAGE')} className="text-[var(--info)] border-[var(--info)]/30 hover:bg-[var(--info)]/10" icon={Activity}>
+                        {v.status === 'WAITING_TRIAGE' ? 'Forward to Triage' : 'Send to Triage'}
                       </Btn>
                     )}
                     
@@ -1178,8 +1202,22 @@ export default function PatientsPage() {
                     {p.last_visit ? new Date(p.last_visit).toLocaleDateString('en-KE', {month:'short', day:'numeric', year:'numeric'}) : 'No visits recorded'}
                   </td>
                   <td className="px-5 py-4 text-right">
-                    <div className="w-8 h-8 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-center text-[var(--text-faint)] group-hover:text-[var(--accent)] group-hover:bg-[var(--accent)]/10 transition-all">
-                      <ChevronRight size={16} />
+                    <div className="flex items-center justify-end gap-2">
+                      <Btn
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenCheckIn(p);
+                        }}
+                        icon={Activity}
+                        className="text-[var(--accent)] border-[var(--accent)]/30 hover:bg-[var(--accent)]/10 text-xs py-1 px-2.5 whitespace-nowrap"
+                      >
+                        Check In
+                      </Btn>
+                      <div className="w-8 h-8 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-center text-[var(--text-faint)] group-hover:text-[var(--accent)] group-hover:bg-[var(--accent)]/10 transition-all">
+                        <ChevronRight size={16} />
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -1731,6 +1769,81 @@ export default function PatientsPage() {
                       />
                     </div>
                   </div>
+
+                  {/* Immediate Triage Check-in Card */}
+                  <div className="p-4 bg-[var(--accent)]/5 border border-[var(--accent)]/25 rounded-2xl space-y-3.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Activity className="text-[var(--accent)]" size={18} />
+                        <div>
+                          <div className="text-xs font-black text-[var(--text-primary)]">Route Directly to Triage Queue</div>
+                          <div className="text-[10px] text-[var(--text-muted)]">Check in immediately upon registration for clinical vitals</div>
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs font-bold text-[var(--accent)] cursor-pointer bg-[var(--bg-elevated)] px-2.5 py-1 rounded-lg border border-[var(--border)]">
+                        <input
+                          type="checkbox"
+                          checked={registerAndTriage}
+                          onChange={e => setRegisterAndTriage(e.target.checked)}
+                          className="rounded text-[var(--accent)] focus:ring-[var(--accent)] w-4 h-4 cursor-pointer"
+                        />
+                        <span>Send to Triage</span>
+                      </label>
+                    </div>
+
+                    {registerAndTriage && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border)]/50">
+                        <div>
+                          <label className="text-[11px] font-bold text-[var(--text-muted)] block mb-1">Destination Clinic</label>
+                          <select
+                            value={visitForm.department || 'opd'}
+                            onChange={e => vf('department', e.target.value)}
+                            className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-xs text-[var(--text-primary)] font-semibold"
+                          >
+                            <option value="opd">🩺 OPD Doctor (General Medical)</option>
+                            <option value="mch">🤰 MCH Clinic (Mother & Child)</option>
+                            <option value="dental">🦷 Dental Clinic</option>
+                            <option value="eye">👁️ Eye Clinic</option>
+                            <option value="emergency">🚨 Emergency / Urgent</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-[var(--text-muted)] block mb-1">Triage Priority</label>
+                          <select
+                            value={visitForm.priority || 'normal'}
+                            onChange={e => vf('priority', e.target.value)}
+                            className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-xs text-[var(--text-primary)] font-semibold"
+                          >
+                            <option value="normal">🟢 Normal Routine</option>
+                            <option value="urgent">🟡 Urgent Priority</option>
+                            <option value="emergency">🔴 Emergency Immediate</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-[var(--text-muted)] block mb-1">Consultation Fee (KES)</label>
+                          <input
+                            type="number"
+                            value={visitForm.consultation_fee}
+                            onChange={e => vf('consultation_fee', e.target.value)}
+                            className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-xs text-[var(--text-primary)] font-bold font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-[var(--text-muted)] block mb-1">Payment Method</label>
+                          <select
+                            value={visitForm.payment_method}
+                            onChange={e => vf('payment_method', e.target.value)}
+                            className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl text-xs text-[var(--text-primary)] font-semibold"
+                          >
+                            <option value="cash">💵 Cash Payment</option>
+                            <option value="mpesa">📱 M-Pesa</option>
+                            <option value="insurance">🛡️ Insurance / SHA</option>
+                            <option value="waiver">🤝 Waived / Exempt</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1760,7 +1873,7 @@ export default function PatientsPage() {
                 </Btn>
               ) : (
                 <Btn onClick={handleRegisterPatient} disabled={saving} className="flex-1.5" icon={CheckCircle2}>
-                  {saving ? 'Creating record...' : 'Finalize & Register'}
+                  {saving ? 'Creating record...' : (registerAndTriage ? '✅ Register & Send to Triage' : 'Finalize & Register Profile')}
                 </Btn>
               )}
             </div>

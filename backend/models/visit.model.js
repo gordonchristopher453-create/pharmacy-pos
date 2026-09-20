@@ -132,7 +132,7 @@ class VisitModel {
 
     if (visit_type) { params.push(visit_type); q += ` AND v.visit_type=$${params.length}`; }
 
-    if (date) {
+    if (date && date !== 'all') {
       const d = date === 'today' ? new Date().toISOString().split('T')[0] : date;
       params.push(d);
       q += ` AND (DATE(v.created_at)=$${params.length} OR DATE(v.created_at AT TIME ZONE 'UTC')=$${params.length})`;
@@ -247,6 +247,10 @@ class VisitModel {
       if (['waiting_lab', 'to_lab', 'laboratory'].includes(normalizedStatus)) normalizedStatus = 'lab';
       if (['waiting_injection', 'to_injection'].includes(normalizedStatus)) normalizedStatus = 'injection_room';
       if (['finish', 'done'].includes(normalizedStatus)) normalizedStatus = 'completed';
+      if (['send_triage', 'to_triage', 'waiting_triage', 'triaged'].includes(normalizedStatus)) {
+        normalizedStatus = 'WAITING_TRIAGE';
+        if (!department) department = 'triage';
+      }
 
       await client.query('BEGIN');
       const result = await client.query(`
